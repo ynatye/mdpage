@@ -1,19 +1,50 @@
 {
   "name": "mdpage",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "One markdown file → one beautiful page",
+  "type": "module",
   "scripts": {
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:server\"",
+    "dev:vite": "vite",
+    "dev:server": "nodemon --watch server.js --watch lib/ server.js",
+    "build": "vite build",
+    "preview": "vite preview",
     "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "markdown",
+    "publishing",
+    "typography"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "express": "^5.2.1",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.1",
-    "markdown-it-footnote": "^4.0.0"
+    "markdown-it-footnote": "^4.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.3"
+  },
+  "devDependencies": {
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.24",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^9.2.1",
+    "lucide-react": "^0.469.0",
+    "nodemon": "^3.1.11",
+    "postcss": "^8.5.6",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^2.6.1",
+    "tailwindcss": "^3.4.19",
+    "tailwindcss-animate": "^1.0.7",
+    "vite": "^6.4.1"
   }
 }

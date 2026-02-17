@@ -1,6 +1,5 @@
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
-import footnote from 'markdown-it-footnote';
 
 // Configure markdown-it with GFM-like options
 const md = new MarkdownIt({
@@ -17,30 +16,9 @@ const md = new MarkdownIt({
   }
 });
 
-// Add footnote plugin
-md.use(footnote);
-
 // Export render function
 export function render(markdown) {
   return md.render(markdown);
-}
-
-// Render markdown content, stripping the first H1 to avoid duplication with header
-export function renderContent(markdown) {
-  const lines = markdown.split('\n');
-  let contentLines = [];
-  let foundFirstH1 = false;
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!foundFirstH1 && trimmed.startsWith('# ')) {
-      foundFirstH1 = true;
-      continue; // Skip the first H1
-    }
-    contentLines.push(line);
-  }
-  
-  return md.render(contentLines.join('\n'));
 }
 
 // Extract title from first H1 heading

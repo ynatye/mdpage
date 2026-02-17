@@ -1,7 +1,11 @@
-const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
-const { render, renderContent, extractTitle, generateSlug, extractDescription, estimateReadingTime } = require('./lib/markdown');
+import express from 'express';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { render, renderContent, extractTitle, generateSlug, extractDescription, estimateReadingTime } from './lib/markdown.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3456;
@@ -9,7 +13,11 @@ const PORT = 3456;
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static('public'));
+
+// Serve static files from dist in production
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, 'dist')));
+}
 
 // Ensure data directories exist
 async function ensureDataDirs() {
@@ -47,18 +55,9 @@ async function saveIndex(index) {
   await fs.writeFile('./data/index.json', JSON.stringify(index, null, 2));
 }
 
-// GET / - Upload page
-app.get('/', async (req, res) => {
-  try {
-    const html = await fs.readFile('./views/upload.html', 'utf8');
-    res.send(html);
-  } catch (error) {
-    res.status(500).send('Error loading upload page');
-  }
-});
-
-// POST /publish - Publish article
-app.post('/publish', async (req, res) => {
+// API Routes
+// POST /api/publish - Publish article
+app.post('/api/publish', async (req, res) => {
   try {
     const { markdown, slug: customSlug } = req.body;
     
@@ -149,14 +148,14 @@ app.post('/publish', async (req, res) => {
   }
 });
 
-// GET /:slug - View article
-app.get('/:slug', async (req, res) => {
+// GET /api/articles/:slug - Get article data
+app.get('/api/articles/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     
     // Validate slug format
     if (!slug || !slug.match(/^[a-z0-9-]+$/)) {
-      return res.status(404).send('Article not found');
+      return res.status(404).json({ error: 'Article not found' });
     }
     
     // Load article metadata
@@ -164,7 +163,7 @@ app.get('/:slug', async (req, res) => {
     const article = index[slug];
     
     if (!article) {
-      return res.status(404).send('Article not found');
+      return res.status(404).json({ error: 'Article not found' });
     }
 
     // Load article content
@@ -174,7 +173,7 @@ app.get('/:slug', async (req, res) => {
       markdown = await fs.readFile(articlePath, 'utf8');
     } catch (error) {
       if (error.code === 'ENOENT') {
-        return res.status(404).send('Article content not found');
+        return res.status(404).json({ error: 'Article content not found' });
       }
       throw error;
     }
@@ -182,43 +181,52 @@ app.get('/:slug', async (req, res) => {
     // Render content (strips first H1 to avoid duplication with header)
     const content = renderContent(markdown);
     
-    // Load template
-    let template;
-    try {
-      template = await fs.readFile('./views/article.html', 'utf8');
-    } catch (error) {
-      console.error('Template loading error:', error);
-      return res.status(500).send('Template error');
-    }
-    
-    // Format date
-    const date = new Date(article.createdAt).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+    res.json({
+      title: article.title,
+      content,
+      meta: {
+        slug: article.slug,
+        description: article.description,
+        createdAt: article.createdAt,
+        readingTime: article.readingTime
+      }
     });
 
-    // Escape content for HTML (prevent XSS from title/description)
-    const escapeHtml = (text) => text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
-    // Replace template variables
-    const html = template
-      .replace(/{{title}}/g, escapeHtml(article.title))
-      .replace(/{{description}}/g, escapeHtml(article.description))
-      .replace(/{{content}}/g, content)
-      .replace(/{{date}}/g, escapeHtml(date))
-      .replace(/{{readingTime}}/g, escapeHtml(article.readingTime));
-
-    res.send(html);
-
   } catch (error) {
-    console.error('Article view error:', error);
-    res.status(500).send('Error loading article');
+    console.error('Article API error:', error);
+    res.status(500).json({ error: 'Error loading article' });
+  }
+});
+
+// Root route for production SPA
+app.get('/', async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      // In production, serve the built React app
+      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    } else {
+      // In development, let Vite handle the frontend
+      res.status(404).send('Development mode: Use Vite dev server on port 5173');
+    }
+  } catch (error) {
+    console.error('SPA fallback error:', error);
+    res.status(500).send('Error serving application');
+  }
+});
+
+// SPA fallback - serve React app for all non-API routes
+app.get('/:slug', async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      // In production, serve the built React app
+      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    } else {
+      // In development, let Vite handle the frontend
+      res.status(404).send('Development mode: Use Vite dev server on port 5173');
+    }
+  } catch (error) {
+    console.error('SPA fallback error:', error);
+    res.status(500).send('Error serving application');
   }
 });
 
@@ -227,6 +235,9 @@ async function start() {
   await ensureDataDirs();
   app.listen(PORT, () => {
     console.log(`mdpage server running at http://localhost:${PORT}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Development: React app available at http://localhost:5173');
+    }
   });
 }
 

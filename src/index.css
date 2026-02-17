@@ -1,0 +1,197 @@
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+ 
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 94.1%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom Article Prose Styles */
+@layer components {
+  .article-prose {
+    @apply max-w-none;
+  }
+
+  .article-prose h1 {
+    @apply font-heading font-bold text-4xl lg:text-5xl leading-tight mb-4 text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose h2 {
+    @apply font-heading font-semibold text-2xl lg:text-3xl leading-tight mt-12 mb-4 text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose h3 {
+    @apply font-heading font-semibold text-xl lg:text-2xl leading-tight mt-8 mb-3 text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose h4 {
+    @apply font-heading font-semibold text-lg lg:text-xl leading-tight mt-6 mb-2 text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose h5,
+  .article-prose h6 {
+    @apply font-heading font-semibold text-base leading-tight mt-6 mb-2 text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose p {
+    @apply font-body text-lg leading-relaxed mb-6 text-gray-800 dark:text-gray-200;
+  }
+
+  .article-prose a {
+    @apply text-blue-600 dark:text-blue-400 underline underline-offset-2 hover:text-blue-800 dark:hover:text-blue-300 transition-colors;
+  }
+
+  .article-prose strong {
+    @apply font-semibold text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose em {
+    @apply italic;
+  }
+
+  .article-prose code {
+    @apply font-mono text-sm bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-900 dark:text-gray-100;
+  }
+
+  .article-prose pre {
+    @apply font-mono text-sm bg-gray-50 dark:bg-gray-900 p-6 rounded-lg overflow-x-auto mb-6 border border-gray-200 dark:border-gray-700;
+  }
+
+  .article-prose pre code {
+    @apply bg-transparent p-0 text-sm;
+  }
+
+  .article-prose blockquote {
+    @apply border-l-4 border-gray-300 dark:border-gray-600 pl-6 py-1 my-6 italic text-gray-700 dark:text-gray-300;
+  }
+
+  .article-prose blockquote p {
+    @apply mb-0;
+  }
+
+  .article-prose ul,
+  .article-prose ol {
+    @apply mb-6 pl-6;
+  }
+
+  .article-prose li {
+    @apply font-body text-lg leading-relaxed mb-2 text-gray-800 dark:text-gray-200;
+  }
+
+  .article-prose ul li {
+    @apply list-disc;
+  }
+
+  .article-prose ol li {
+    @apply list-decimal;
+  }
+
+  .article-prose hr {
+    @apply my-12 border-0 h-px bg-gray-300 dark:bg-gray-600;
+  }
+
+  .article-prose img {
+    @apply max-w-full h-auto rounded-lg mx-auto my-8;
+  }
+
+  .article-prose table {
+    @apply w-full border-collapse mb-6;
+  }
+
+  .article-prose th,
+  .article-prose td {
+    @apply border border-gray-300 dark:border-gray-600 px-4 py-2 text-left;
+  }
+
+  .article-prose th {
+    @apply bg-gray-100 dark:bg-gray-800 font-heading font-semibold;
+  }
+
+  /* Footnotes */
+  .article-prose .footnote-ref {
+    @apply text-blue-600 dark:text-blue-400 no-underline;
+  }
+
+  .article-prose .footnotes {
+    @apply mt-12 pt-6 border-t border-gray-300 dark:border-gray-600;
+  }
+
+  .article-prose .footnotes p {
+    @apply text-base leading-relaxed;
+  }
+}
+
+/* Upload page specific styles */
+.upload-container {
+  @apply min-h-screen bg-gray-50 dark:bg-gray-950 py-12 px-4;
+}
+
+.drop-zone {
+  @apply border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-12 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer bg-white dark:bg-gray-900;
+}
+
+.drop-zone.drag-over {
+  @apply border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-950/20;
+}
+
+/* Dark mode preference detection */
+@media (prefers-color-scheme: dark) {
+  .dark {
+    color-scheme: dark;
+  }
+}

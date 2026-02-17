@@ -31,19 +31,30 @@ const visitBtn = document.getElementById('visitBtn');
 
 let isPreviewVisible = false;
 
-// File drop functionality
+// File drop functionality with better feedback
 dropZone.addEventListener('click', () => {
   fileInput.click();
 });
 
-dropZone.addEventListener('dragover', (e) => {
+dropZone.addEventListener('dragenter', (e) => {
   e.preventDefault();
   dropZone.classList.add('dragover');
 });
 
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+
 dropZone.addEventListener('dragleave', (e) => {
   e.preventDefault();
-  dropZone.classList.remove('dragover');
+  // Only remove dragover if we're actually leaving the drop zone
+  const rect = dropZone.getBoundingClientRect();
+  const x = e.clientX;
+  const y = e.clientY;
+  if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+    dropZone.classList.remove('dragover');
+  }
 });
 
 dropZone.addEventListener('drop', (e) => {
@@ -62,26 +73,106 @@ fileInput.addEventListener('change', (e) => {
   }
 });
 
-// Handle file reading
+// Handle file reading with visual feedback
 function handleFile(file) {
   if (!file.name.match(/\.(md|markdown|txt)$/i)) {
-    alert('Please select a markdown file (.md, .markdown, or .txt)');
+    showError('Please select a markdown file (.md, .markdown, or .txt)');
     return;
   }
   
+  if (file.size > 1024 * 1024) { // 1MB limit
+    showError('File too large. Maximum size is 1MB.');
+    return;
+  }
+  
+  // Show processing state
+  dropZone.classList.add('processing');
+  const originalText = dropZone.querySelector('.drop-zone-text').textContent;
+  dropZone.querySelector('.drop-zone-text').textContent = 'Reading file...';
+  
   const reader = new FileReader();
+  
   reader.onload = (e) => {
-    markdownTextarea.value = e.target.result;
-    
-    // Auto-generate slug from first heading if slug is empty
-    if (!slugInput.value.trim()) {
-      const title = extractTitle(e.target.result);
-      if (title !== 'Untitled') {
-        slugInput.value = generateSlug(title);
+    try {
+      markdownTextarea.value = e.target.result;
+      
+      // Auto-generate slug from first heading if slug is empty
+      if (!slugInput.value.trim()) {
+        const title = extractTitle(e.target.result);
+        if (title !== 'Untitled') {
+          slugInput.value = generateSlug(title);
+        }
       }
+      
+      // Show success feedback
+      dropZone.classList.remove('processing');
+      dropZone.classList.add('success');
+      dropZone.querySelector('.drop-zone-text').textContent = `✅ Loaded ${file.name}`;
+      
+      setTimeout(() => {
+        dropZone.classList.remove('success');
+        dropZone.querySelector('.drop-zone-text').textContent = originalText;
+      }, 2000);
+      
+    } catch (error) {
+      console.error('File reading error:', error);
+      showError('Error reading file. Please try again.');
+      resetDropZone(originalText);
     }
   };
+  
+  reader.onerror = () => {
+    showError('Error reading file. Please try again.');
+    resetDropZone(originalText);
+  };
+  
   reader.readAsText(file);
+}
+
+function resetDropZone(originalText) {
+  dropZone.classList.remove('processing', 'success');
+  dropZone.querySelector('.drop-zone-text').textContent = originalText;
+}
+
+function showError(message) {
+  // Create a more elegant error display instead of alert
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'error-message';
+  errorDiv.textContent = message;
+  errorDiv.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #dc2626;
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 6px;
+    font-family: var(--font-heading);
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+    z-index: 1000;
+    animation: slideIn 0.3s ease-out;
+  `;
+  
+  // Add keyframes for the animation
+  if (!document.querySelector('#error-keyframes')) {
+    const style = document.createElement('style');
+    style.id = 'error-keyframes';
+    style.textContent = `
+      @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+  
+  document.body.appendChild(errorDiv);
+  
+  setTimeout(() => {
+    errorDiv.style.animation = 'slideIn 0.3s ease-out reverse';
+    setTimeout(() => errorDiv.remove(), 300);
+  }, 3000);
 }
 
 // Extract title from first H1
@@ -158,13 +249,13 @@ previewBtn.addEventListener('click', () => {
   }
 });
 
-// Form submission
+// Form submission with better error handling
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   
   const markdown = markdownTextarea.value.trim();
   if (!markdown) {
-    alert('Please enter some markdown content');
+    showError('Please enter some markdown content');
     return;
   }
   
@@ -172,7 +263,11 @@ uploadForm.addEventListener('submit', async (e) => {
   
   // Disable button during submission
   publishBtn.disabled = true;
+  const originalText = publishBtn.textContent;
   publishBtn.textContent = 'Publishing...';
+  
+  // Hide previous results
+  resultContainer.classList.add('hidden');
   
   try {
     const response = await fetch('/publish', {
@@ -186,7 +281,7 @@ uploadForm.addEventListener('submit', async (e) => {
     const result = await response.json();
     
     if (result.success) {
-      // Show success result
+      // Show success result with improved styling
       const fullUrl = `${window.location.origin}${result.url}`;
       resultUrl.textContent = fullUrl;
       resultContainer.classList.remove('hidden');
@@ -194,19 +289,37 @@ uploadForm.addEventListener('submit', async (e) => {
       // Update visit button
       visitBtn.onclick = () => window.open(result.url, '_blank');
       
-      // Scroll to result
-      resultContainer.scrollIntoView({ behavior: 'smooth' });
+      // Smooth scroll to result
+      setTimeout(() => {
+        resultContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+      
+      // Clear form on success
+      markdownTextarea.value = '';
+      slugInput.value = '';
+      if (isPreviewVisible) {
+        previewBtn.click(); // Hide preview
+      }
       
     } else {
-      alert(`Publication failed: ${result.error}`);
+      // Handle specific error cases
+      let errorMessage = result.error;
+      if (result.suggestion) {
+        errorMessage += `\n\n${result.suggestion}`;
+      }
+      showError(errorMessage);
     }
     
   } catch (error) {
     console.error('Publish error:', error);
-    alert('Failed to publish article. Please try again.');
+    if (error.name === 'TypeError' && !navigator.onLine) {
+      showError('No internet connection. Please check your network and try again.');
+    } else {
+      showError('Failed to publish article. Please try again.');
+    }
   } finally {
     publishBtn.disabled = false;
-    publishBtn.textContent = 'Publish Article';
+    publishBtn.textContent = originalText;
   }
 });
 

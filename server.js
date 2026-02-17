@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
-const { render, extractTitle, generateSlug, extractDescription, estimateReadingTime } = require('./lib/markdown');
+const { render, renderContent, extractTitle, generateSlug, extractDescription, estimateReadingTime } = require('./lib/markdown');
 
 const app = express();
 const PORT = 3456;
@@ -62,30 +62,62 @@ app.post('/publish', async (req, res) => {
   try {
     const { markdown, slug: customSlug } = req.body;
     
-    if (!markdown || markdown.trim().length === 0) {
+    // Validate input
+    if (!markdown || typeof markdown !== 'string' || markdown.trim().length === 0) {
       return res.status(400).json({ error: 'Markdown content is required' });
     }
 
-    // Extract metadata
-    const title = extractTitle(markdown);
-    const slug = customSlug && customSlug.trim() 
-      ? customSlug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
-      : generateSlug(title);
-    
-    if (!slug) {
-      return res.status(400).json({ error: 'Could not generate valid slug' });
+    if (markdown.trim().length > 1024 * 1024) { // 1MB limit
+      return res.status(400).json({ error: 'Markdown content too large (max 1MB)' });
     }
 
+    // Extract and validate title
+    const title = extractTitle(markdown);
+    if (!title || title === 'Untitled' || title.trim().length === 0) {
+      return res.status(400).json({ 
+        error: 'Article must have a title (first line starting with "# ")' 
+      });
+    }
+
+    // Generate and validate slug
+    let slug;
+    if (customSlug && customSlug.trim()) {
+      slug = customSlug.trim().toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      
+      if (!slug || slug.length === 0) {
+        return res.status(400).json({ 
+          error: 'Invalid custom slug. Use only letters, numbers, and hyphens.' 
+        });
+      }
+    } else {
+      slug = generateSlug(title);
+      if (!slug || slug.length === 0) {
+        return res.status(400).json({ error: 'Could not generate valid slug from title' });
+      }
+    }
+
+    // Check for slug collision
+    const index = await loadIndex();
+    if (index[slug]) {
+      return res.status(409).json({ 
+        error: 'An article with this URL already exists',
+        suggestion: 'Try using a different custom slug or modify the title'
+      });
+    }
+
+    // Extract metadata
     const description = extractDescription(markdown);
     const readingTime = estimateReadingTime(markdown);
     const createdAt = new Date().toISOString();
 
     // Save markdown file
     const articlePath = path.join('./data/articles', `${slug}.md`);
-    await fs.writeFile(articlePath, markdown);
+    await fs.writeFile(articlePath, markdown, 'utf8');
 
     // Update index
-    const index = await loadIndex();
     index[slug] = {
       slug,
       title,
@@ -104,6 +136,15 @@ app.post('/publish', async (req, res) => {
 
   } catch (error) {
     console.error('Publish error:', error);
+    
+    // More specific error messages
+    if (error.code === 'ENOSPC') {
+      return res.status(507).json({ error: 'Server storage full' });
+    }
+    if (error.code === 'EACCES') {
+      return res.status(500).json({ error: 'Server permission error' });
+    }
+    
     res.status(500).json({ error: 'Failed to publish article' });
   }
 });
@@ -112,6 +153,11 @@ app.post('/publish', async (req, res) => {
 app.get('/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
+    
+    // Validate slug format
+    if (!slug || !slug.match(/^[a-z0-9-]+$/)) {
+      return res.status(404).send('Article not found');
+    }
     
     // Load article metadata
     const index = await loadIndex();
@@ -123,13 +169,27 @@ app.get('/:slug', async (req, res) => {
 
     // Load article content
     const articlePath = path.join('./data/articles', `${slug}.md`);
-    const markdown = await fs.readFile(articlePath, 'utf8');
+    let markdown;
+    try {
+      markdown = await fs.readFile(articlePath, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return res.status(404).send('Article content not found');
+      }
+      throw error;
+    }
     
-    // Render content
-    const content = render(markdown);
+    // Render content (strips first H1 to avoid duplication with header)
+    const content = renderContent(markdown);
     
     // Load template
-    const template = await fs.readFile('./views/article.html', 'utf8');
+    let template;
+    try {
+      template = await fs.readFile('./views/article.html', 'utf8');
+    } catch (error) {
+      console.error('Template loading error:', error);
+      return res.status(500).send('Template error');
+    }
     
     // Format date
     const date = new Date(article.createdAt).toLocaleDateString('en-US', {
@@ -138,13 +198,21 @@ app.get('/:slug', async (req, res) => {
       day: 'numeric'
     });
 
+    // Escape content for HTML (prevent XSS from title/description)
+    const escapeHtml = (text) => text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
     // Replace template variables
     const html = template
-      .replace(/{{title}}/g, article.title)
-      .replace(/{{description}}/g, article.description)
+      .replace(/{{title}}/g, escapeHtml(article.title))
+      .replace(/{{description}}/g, escapeHtml(article.description))
       .replace(/{{content}}/g, content)
-      .replace(/{{date}}/g, date)
-      .replace(/{{readingTime}}/g, article.readingTime);
+      .replace(/{{date}}/g, escapeHtml(date))
+      .replace(/{{readingTime}}/g, escapeHtml(article.readingTime));
 
     res.send(html);
 

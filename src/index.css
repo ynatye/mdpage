@@ -189,6 +189,27 @@
   @apply border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-950/20;
 }
 
+/* Editor styles */
+.editor-layout {
+  /* Ensure the layout fills the screen properly */
+  height: calc(100vh - 73px); /* Subtract top bar height */
+}
+
+/* Responsive editor layout */
+@media (max-width: 768px) {
+  .editor-layout {
+    flex-direction: column;
+  }
+  
+  .editor-panel {
+    min-height: 50vh;
+  }
+  
+  .preview-panel {
+    min-height: 50vh;
+  }
+}
+
 /* Dark mode preference detection */
 @media (prefers-color-scheme: dark) {
   .dark {

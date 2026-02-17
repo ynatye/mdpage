@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mdpage - Publish Markdown</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+  <style media="(prefers-color-scheme: dark)">
+    @import url("https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css");
+  </style>
+</head>
+<body>
+  <div class="upload-container">
+    <div class="upload-header">
+      <h1 class="upload-title">mdpage</h1>
+      <p class="upload-subtitle">One markdown file → one beautiful page</p>
+    </div>
+
+    <form class="upload-form" id="uploadForm">
+      <div class="form-group">
+        <label class="form-label">Drop your .md file or paste markdown</label>
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-icon">📄</div>
+          <div class="drop-zone-text">
+            Drag and drop a .md file here, or click to select
+          </div>
+          <input type="file" id="fileInput" accept=".md,.markdown,.txt" hidden>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="markdown" class="form-label">Or paste your markdown here</label>
+        <textarea 
+          id="markdown" 
+          name="markdown" 
+          class="form-input markdown-textarea" 
+          placeholder="# Your Article Title
+
+Write your markdown here..."
+        ></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="slug" class="form-label">URL Slug (optional)</label>
+        <input 
+          type="text" 
+          id="slug" 
+          name="slug" 
+          class="form-input"
+          placeholder="my-awesome-article (auto-generated from title if empty)"
+        >
+        <small class="text-muted">Only letters, numbers, and hyphens allowed</small>
+      </div>
+
+      <div class="form-group">
+        <div class="form-actions">
+          <button type="button" id="previewBtn" class="btn btn-secondary">
+            <span id="previewText">Show Preview</span>
+          </button>
+          <button type="submit" id="publishBtn" class="btn btn-primary">
+            Publish Article
+          </button>
+        </div>
+      </div>
+
+      <div id="previewContainer" class="preview-container hidden">
+        <div id="previewContent"></div>
+      </div>
+
+      <div id="resultContainer" class="result-container hidden">
+        <h3>Published Successfully! 🎉</h3>
+        <p>Your article is now live at:</p>
+        <div class="result-url" id="resultUrl"></div>
+        <button type="button" id="copyBtn" class="btn btn-secondary">Copy URL</button>
+        <button type="button" id="visitBtn" class="btn btn-primary">Visit Article</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.0.0/markdown-it.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/upload.js"></script>
+</body>
+</html>

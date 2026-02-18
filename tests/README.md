@@ -8,17 +8,17 @@ Branch: `feat/phase1-qa-lane`
 ## Quick Start
 
 ```bash
-# Run everything (unit + existing + integration if server is up)
-./tests/run-qa.sh
+# Full deterministic gate (recommended local + CI)
+npm run test:all
+
+# Integration harness (starts isolated local server on :3457, waits for /healthz)
+npm run test:integration
+
+# Integration against already-running server (live API mode)
+SERVER_URL=http://my-server:3456 npm run test:integration
 
 # Unit tests only (no server required)
 ./tests/run-qa.sh unit
-
-# Skip integration tests explicitly
-SKIP_INTEGRATION=1 ./tests/run-qa.sh
-
-# Run integration against a specific server
-SERVER_URL=http://my-server:3456 ./tests/run-qa.sh integration
 ```
 
 ---
@@ -81,21 +81,23 @@ npm test
 node scripts/validate-publish.js
 ```
 
-### Integration Tests (Phase 1 API — needs server)
+### Integration Tests (Phase 1 API — deterministic harness)
 
-Tests the actual HTTP API. Many are marked as `skip` until Phase 1 is
-implemented. Once the server adds `tier` support, they will automatically
-run fully.
+`npm run test:integration` is the canonical entrypoint. It is strict by default:
+
+- waits for `/healthz` readiness (local or live server)
+- fails if server is unreachable
+- fails if critical Phase 1 contracts are missing
 
 ```bash
-# Start the server first
-node server.js &
+# Preferred: self-managed local integration run
+npm run test:integration
 
-# Run integration tests
-node tests/integration/api-phase1.test.js
+# Live API mode (server must already be running)
+SERVER_URL=http://my-server:3456 npm run test:integration
 
-# OR via the run-qa.sh entrypoint
-./tests/run-qa.sh integration
+# Optional exploratory mode (not for CI): allow phase1 skips
+INTEGRATION_STRICT_PHASE1=0 SERVER_URL=http://my-server:3456 npm run test:integration
 ```
 
 ### Manual Tests (browser-based)

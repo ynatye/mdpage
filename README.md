@@ -96,12 +96,21 @@ npm run preview      # vite preview
 ### Test / validation
 
 ```bash
+# Canonical one-command gate (local + CI)
+npm run test:all
+
+# Individual lanes
 npm run test:backend
 npm run test:unit
 npm run test:integration
 npm run test:phase1
-npm run test:all
 node scripts/validate-publish.js
+
+# Live API integration lane (explicit server URL + readiness checks)
+SERVER_URL=http://localhost:3456 npm run test:integration
+
+# Exploratory only (not CI): allow phase1 skips
+INTEGRATION_STRICT_PHASE1=0 SERVER_URL=http://localhost:3456 npm run test:integration
 ```
 
 ---

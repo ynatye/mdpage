@@ -1,33 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
-import { Chart, registerables } from 'chart.js';
-
-Chart.register(...registerables);
 
 let chartCounter = 0;
-
-// Parse CSV-like chart data into Chart.js config
-function parseChartData(str) {
-  const lines = str.trim().split('\n').map(l => l.trim()).filter(l => l);
-  if (lines.length < 2) return null;
-
-  const headers = lines[0].split(',').map(h => h.trim());
-  const labelCol = headers[0];
-  const datasetNames = headers.slice(1);
-
-  const labels = [];
-  const datasets = datasetNames.map(name => ({ label: name, data: [] }));
-
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim());
-    labels.push(cols[0]);
-    for (let d = 0; d < datasetNames.length; d++) {
-      datasets[d].data.push(parseFloat(cols[d + 1]) || 0);
-    }
-  }
-
-  return { labels, datasets };
-}
 
 // Configure markdown-it with GFM-like options
 const md = new MarkdownIt({
@@ -38,7 +12,7 @@ const md = new MarkdownIt({
     if (lang === 'chart') {
       const id = `mdpage-chart-${chartCounter++}`;
       const escaped = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      return `<div class="mdpage-chart-wrapper"><canvas id="${id}" data-chart="${escaped}"></canvas></div>`;
+      return `<div class="mdpage-chart-wrapper"><div class="mdpage-chart" id="${id}" data-chart="${escaped}"></div></div>`;
     }
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -54,7 +28,7 @@ const defaultFence = md.renderer.rules.fence;
 md.renderer.rules.fence = function (tokens, idx, options, env, self) {
   const token = tokens[idx];
   if (token.info.trim() === 'chart') {
-    // highlight already returned the canvas HTML, just return it directly
+    // highlight already returned the div HTML, just return it directly
     return md.options.highlight(token.content, 'chart');
   }
   return defaultFence(tokens, idx, options, env, self);
@@ -113,87 +87,31 @@ function preprocess(markdown) {
   return convertAsciiTables(markdown);
 }
 
-// Color palette for chart datasets
-const chartColors = [
-  'rgba(59, 130, 246, 0.8)',   // blue
-  'rgba(16, 185, 129, 0.8)',   // green
-  'rgba(245, 158, 11, 0.8)',   // amber
-  'rgba(239, 68, 68, 0.8)',    // red
-  'rgba(139, 92, 246, 0.8)',   // purple
-  'rgba(236, 72, 153, 0.8)',   // pink
-  'rgba(6, 182, 212, 0.8)',    // cyan
-];
+// Store chart roots for cleanup - exported so pages can use it
+export const chartRoots = new WeakMap();
 
-const chartColorsBorder = [
-  'rgba(59, 130, 246, 1)',
-  'rgba(16, 185, 129, 1)',
-  'rgba(245, 158, 11, 1)',
-  'rgba(239, 68, 68, 1)',
-  'rgba(139, 92, 246, 1)',
-  'rgba(236, 72, 153, 1)',
-  'rgba(6, 182, 212, 1)',
-];
-
-// Hydrate all chart canvases in a container
-export function hydrateCharts(container) {
-  if (!container) return;
-  const canvases = container.querySelectorAll('canvas[data-chart]');
-  canvases.forEach(canvas => {
-    const raw = canvas.getAttribute('data-chart');
-    if (!raw || canvas._chartInstance) return;
-
-    const parsed = parseChartData(raw);
-    if (!parsed) return;
-
-    // Apply colors
-    parsed.datasets.forEach((ds, i) => {
-      ds.backgroundColor = chartColors[i % chartColors.length];
-      ds.borderColor = chartColorsBorder[i % chartColorsBorder.length];
-      ds.borderWidth = 2;
-      ds.borderRadius = 4;
-    });
-
-    // Detect if dark mode
-    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const textColor = isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)';
-    const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
-
-    canvas._chartInstance = new Chart(canvas, {
-      type: 'bar',
-      data: parsed,
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          legend: {
-            labels: { color: textColor, font: { family: 'Inter', size: 13 } }
-          }
-        },
-        scales: {
-          x: {
-            ticks: { color: textColor, font: { family: 'Inter', size: 12 } },
-            grid: { color: gridColor }
-          },
-          y: {
-            ticks: { color: textColor, font: { family: 'Inter', size: 12 } },
-            grid: { color: gridColor }
-          }
-        }
-      }
-    });
-  });
+// Helper function to get chart data from DOM element
+export function getChartData(div) {
+  const raw = div.getAttribute('data-chart');
+  if (!raw) return null;
+  
+  // Decode the escaped CSV data
+  return raw
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
 }
 
-// Destroy chart instances before re-render
+// Placeholder functions - actual implementation moved to React components
+export function hydrateCharts(container) {
+  // This will be implemented in the React components using createRoot
+  console.log('hydrateCharts called - should be implemented in React components');
+}
+
 export function destroyCharts(container) {
-  if (!container) return;
-  const canvases = container.querySelectorAll('canvas[data-chart]');
-  canvases.forEach(canvas => {
-    if (canvas._chartInstance) {
-      canvas._chartInstance.destroy();
-      canvas._chartInstance = null;
-    }
-  });
+  // This will be implemented in the React components
+  console.log('destroyCharts called - should be implemented in React components');
 }
 
 // Export render function

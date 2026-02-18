@@ -149,8 +149,8 @@
     @apply my-8 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700;
   }
 
-  .mdpage-chart-wrapper canvas {
-    @apply w-full;
+  .mdpage-chart {
+    @apply w-full min-h-80;
   }
 
   .article-prose img {

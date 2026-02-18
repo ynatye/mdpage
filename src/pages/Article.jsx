@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { hydrateCharts } from '@/lib/markdown'
+import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 
 export default function Article() {
   const { slug } = useParams()
@@ -110,11 +110,7 @@ export default function Article() {
   const articleContentRef = useRef(null)
 
   // Hydrate charts after article renders
-  useEffect(() => {
-    if (article && articleContentRef.current) {
-      hydrateCharts(articleContentRef.current)
-    }
-  }, [article])
+  useChartHydration(articleContentRef, [article])
 
   // Format date
   const date = new Date(article.meta.createdAt).toLocaleDateString('en-US', {

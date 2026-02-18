@@ -20,14 +20,14 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "chart.js": "^4.5.1",
     "express": "^5.2.1",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.1",
     "markdown-it-footnote": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.3"
+    "react-router-dom": "^6.30.3",
+    "recharts": "^3.7.0"
   },
   "devDependencies": {
     "@radix-ui/react-label": "^2.1.8",

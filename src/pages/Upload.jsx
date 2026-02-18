@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { render, extractTitle, generateSlug, hydrateCharts, destroyCharts } from "@/lib/markdown"
+import { render, extractTitle, generateSlug } from "@/lib/markdown"
+import { useChartHydration } from "@/hooks/useChartHydration.jsx"
 import { toast } from "sonner"
 
 export default function Upload() {
@@ -45,12 +46,7 @@ export default function Upload() {
   }, [markdown, slug, updatePreview])
 
   // Hydrate charts after preview renders
-  useEffect(() => {
-    if (renderedHTML && previewRef.current) {
-      destroyCharts(previewRef.current)
-      hydrateCharts(previewRef.current)
-    }
-  }, [renderedHTML])
+  useChartHydration(previewRef, [renderedHTML])
 
   // Detect mobile screen size
   useEffect(() => {

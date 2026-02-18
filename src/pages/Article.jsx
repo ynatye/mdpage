@@ -85,10 +85,10 @@ export default function Article() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'hsl(var(--background))' }}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-400">Loading article...</p>
+          <div className="animate-spin h-12 w-12 border-b-2 mx-auto mb-4" style={{ borderColor: 'hsl(var(--primary))' }}></div>
+          <p style={{ color: 'hsl(var(--muted-foreground))' }}>Loading article...</p>
         </div>
       </div>
     )
@@ -96,18 +96,19 @@ export default function Article() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-900">
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'hsl(var(--background))' }}>
         <div className="text-center max-w-md mx-auto px-4">
           <div className="text-6xl mb-4">📄</div>
-          <h1 className="font-heading text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+          <h1 className="text-2xl font-bold mb-2" style={{ color: 'hsl(var(--foreground))', fontFamily: 'Geist Mono, monospace' }}>
             Article Not Found
           </h1>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">
+          <p className="mb-4" style={{ color: 'hsl(var(--muted-foreground))', fontFamily: 'Geist Mono, monospace' }}>
             The article you're looking for doesn't exist or has been removed.
           </p>
           <a 
             href="/"
-            className="text-blue-600 dark:text-blue-400 hover:underline"
+            className="hover:underline"
+            style={{ color: 'hsl(var(--primary))', fontFamily: 'Geist Mono, monospace' }}
           >
             ← Back to mdpage
           </a>
@@ -128,13 +129,13 @@ export default function Article() {
   })
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-900">
+    <div className="min-h-screen" style={{ backgroundColor: 'hsl(var(--background))' }}>
       <article className="max-w-[680px] mx-auto px-6 py-12 lg:py-16">
         <header className="mb-12">
-          <h1 className="font-heading text-4xl lg:text-5xl font-bold leading-tight text-gray-900 dark:text-gray-100 mb-4">
+          <h1 className="text-4xl lg:text-5xl font-bold leading-tight mb-4" style={{ color: 'hsl(var(--foreground))', fontFamily: 'Geist Mono, monospace' }}>
             {article.title}
           </h1>
-          <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+          <div className="flex items-center gap-4 text-sm" style={{ color: 'hsl(var(--muted-foreground))', fontFamily: 'Geist Mono, monospace' }}>
             <time dateTime={article.meta.createdAt}>
               {date}
             </time>
@@ -149,11 +150,12 @@ export default function Article() {
           dangerouslySetInnerHTML={{ __html: article.content }}
         />
 
-        <footer className="mt-16 pt-8 border-t border-gray-200 dark:border-gray-700">
+        <footer className="mt-16 pt-8 border-t" style={{ borderColor: 'hsl(var(--border))' }}>
           <div className="text-center">
             <a 
               href="/" 
-              className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+              className="text-sm transition-colors hover:opacity-70"
+              style={{ color: 'hsl(var(--muted-foreground))', fontFamily: 'Geist Mono, monospace' }}
               title="Create your own beautiful articles"
             >
               powered by mdpage

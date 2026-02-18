@@ -1,22 +1,22 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-// Shadcn-inspired color palette using CSS variables
+// Sky blue color palette for charts
 const CHART_COLORS = [
-  'hsl(var(--primary))',
-  'hsl(221.2 83.2% 53.3%)', // Blue
-  'hsl(142.1 76.2% 36.3%)', // Green  
-  'hsl(38.8 92.1% 50.3%)', // Amber
-  'hsl(0 84.2% 60.2%)', // Red
-  'hsl(262.1 83.3% 57.8%)', // Purple
-  'hsl(336.6 80.7% 57.8%)', // Pink
-  'hsl(188.4 82.5% 39.2%)', // Cyan
+  'hsl(199 89% 48%)', // Primary sky blue
+  'hsl(199 89% 42%)', // Darker sky blue
+  'hsl(199 89% 54%)', // Lighter sky blue
+  'hsl(199 89% 36%)', // Much darker
+  'hsl(199 89% 60%)', // Much lighter
+  'hsl(199 89% 30%)', // Very dark
+  'hsl(199 89% 66%)', // Very light
+  'hsl(199 89% 24%)', // Darkest
 ];
 
 function CustomTooltip({ active, payload, label }) {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-card text-card-foreground p-3 rounded-lg shadow-md border border-border">
+      <div className="bg-card text-card-foreground p-3 shadow-md border border-border">
         <p className="font-medium mb-1">{label}</p>
         {payload.map((entry, index) => (
           <p key={index} className="text-sm" style={{ color: entry.color }}>
@@ -81,7 +81,7 @@ function parseChartData(csvString) {
 export default function ChartBlock({ csvData }) {
   if (!csvData || typeof csvData !== 'string') {
     return (
-      <div className="p-4 text-muted-foreground text-center border border-dashed border-muted-foreground/30 rounded-lg">
+      <div className="p-4 text-muted-foreground text-center border border-dashed border-muted-foreground/30">
         <div className="text-destructive">⚠️ No chart data provided</div>
         <div className="text-sm mt-1">Expected CSV format with headers</div>
       </div>
@@ -92,7 +92,7 @@ export default function ChartBlock({ csvData }) {
   
   if (!parsed) {
     return (
-      <div className="p-4 text-muted-foreground text-center border border-dashed border-destructive/30 rounded-lg">
+      <div className="p-4 text-muted-foreground text-center border border-dashed border-destructive/30">
         <div className="text-destructive">⚠️ Invalid chart data</div>
         <div className="text-sm mt-1">Please check your CSV format: headers on first line, data rows below</div>
         <details className="mt-2 text-xs text-left">
@@ -145,7 +145,7 @@ export default function ChartBlock({ csvData }) {
               key={name}
               dataKey={name} 
               fill={CHART_COLORS[index % CHART_COLORS.length]}
-              radius={[2, 2, 0, 0]}
+              radius={[0, 0, 0, 0]}
             />
           ))}
         </BarChart>

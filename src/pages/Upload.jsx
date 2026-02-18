@@ -274,7 +274,7 @@ Start writing your markdown here...
 
 You can also drag and drop a .md file onto this editor."
               className="w-full h-full resize-none border-0 bg-transparent p-6 text-sm font-mono leading-relaxed focus-visible:outline-none focus-visible:ring-0"
-              style={{ fontFamily: 'JetBrains Mono, monospace' }}
+              style={{ fontFamily: 'Geist Mono, monospace' }}
             />
             
             {/* Drag Overlay */}

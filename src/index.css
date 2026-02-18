@@ -1,5 +1,5 @@
-/* Import Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Import Geist Mono */
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,48 +7,50 @@
 
 @layer base {
   :root {
+    /* Light mode - Pure black and white with sky blue accents */
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 0 0% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 0 0% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222.2 84% 4.9%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222.2 84% 4.9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --popover-foreground: 0 0% 9%;
+    --primary: 199 89% 48%; /* Sky blue for interactive elements */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 89%;
+    --input: 0 0% 89%;
+    --ring: 199 89% 48%; /* Sky blue focus ring */
+    --radius: 0; /* No border radius anywhere */
   }
  
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 84% 4.9%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 94.1%;
+    /* Dark mode - Near black background with white text */
+    --background: 0 0% 4%;  /* #09090b equivalent */
+    --foreground: 0 0% 98%;
+    --card: 0 0% 7%;   /* Slightly lighter than background */
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 199 89% 48%; /* Same sky blue for consistency */
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 64%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 15%; /* Subtle dark borders */
+    --input: 0 0% 15%;
+    --ring: 199 89% 48%; /* Sky blue focus ring */
   }
 }
  
@@ -61,43 +63,66 @@
   }
 }
 
-/* Custom Article Prose Styles */
+/* Custom Article Prose Styles - All Geist Mono, minimal design */
 @layer components {
   .article-prose {
     @apply max-w-none;
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose h1 {
-    @apply font-heading font-bold text-4xl lg:text-5xl leading-tight mb-4 text-gray-900 dark:text-gray-100;
+    @apply font-bold text-4xl lg:text-5xl leading-tight mb-4;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose h2 {
-    @apply font-heading font-semibold text-2xl lg:text-3xl leading-tight mt-12 mb-4 text-gray-900 dark:text-gray-100;
+    @apply font-semibold text-2xl lg:text-3xl leading-tight mt-12 mb-4;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose h3 {
-    @apply font-heading font-semibold text-xl lg:text-2xl leading-tight mt-8 mb-3 text-gray-900 dark:text-gray-100;
+    @apply font-semibold text-xl lg:text-2xl leading-tight mt-8 mb-3;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose h4 {
-    @apply font-heading font-semibold text-lg lg:text-xl leading-tight mt-6 mb-2 text-gray-900 dark:text-gray-100;
+    @apply font-semibold text-lg lg:text-xl leading-tight mt-6 mb-2;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose h5,
   .article-prose h6 {
-    @apply font-heading font-semibold text-base leading-tight mt-6 mb-2 text-gray-900 dark:text-gray-100;
+    @apply font-semibold text-base leading-tight mt-6 mb-2;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
   }
 
   .article-prose p {
-    @apply font-body text-lg leading-relaxed mb-6 text-gray-800 dark:text-gray-200;
+    @apply text-base mb-6;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
+    line-height: 1.7;
+    font-size: 15px;
   }
 
   .article-prose a {
-    @apply text-blue-600 dark:text-blue-400 underline underline-offset-2 hover:text-blue-800 dark:hover:text-blue-300 transition-colors;
+    color: hsl(var(--primary));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: color 0.2s;
+  }
+
+  .article-prose a:hover {
+    opacity: 0.8;
   }
 
   .article-prose strong {
-    @apply font-semibold text-gray-900 dark:text-gray-100;
+    @apply font-semibold;
+    color: hsl(var(--foreground));
   }
 
   .article-prose em {
@@ -105,11 +130,19 @@
   }
 
   .article-prose code {
-    @apply font-mono text-sm bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-900 dark:text-gray-100;
+    @apply text-sm px-1.5 py-0.5;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
+    /* No border-radius - sharp corners */
   }
 
   .article-prose pre {
-    @apply font-mono text-sm bg-gray-50 dark:bg-gray-900 p-6 rounded-lg overflow-x-auto mb-6 border border-gray-200 dark:border-gray-700;
+    @apply text-sm p-6 overflow-x-auto mb-6 border;
+    background-color: hsl(var(--muted));
+    border-color: hsl(var(--border));
+    font-family: 'Geist Mono', monospace;
+    /* No border-radius - sharp corners */
   }
 
   .article-prose pre code {
@@ -117,7 +150,9 @@
   }
 
   .article-prose blockquote {
-    @apply border-l-4 border-gray-300 dark:border-gray-600 pl-6 py-1 my-6 italic text-gray-700 dark:text-gray-300;
+    @apply border-l-4 pl-6 py-1 my-6 italic;
+    border-color: hsl(var(--border));
+    color: hsl(var(--muted-foreground));
   }
 
   .article-prose blockquote p {
@@ -130,7 +165,11 @@
   }
 
   .article-prose li {
-    @apply font-body text-lg leading-relaxed mb-2 text-gray-800 dark:text-gray-200;
+    @apply mb-2;
+    color: hsl(var(--foreground));
+    font-family: 'Geist Mono', monospace;
+    line-height: 1.7;
+    font-size: 15px;
   }
 
   .article-prose ul li {
@@ -142,11 +181,15 @@
   }
 
   .article-prose hr {
-    @apply my-12 border-0 h-px bg-gray-300 dark:bg-gray-600;
+    @apply my-12 border-0 h-px;
+    background-color: hsl(var(--border));
   }
 
   .mdpage-chart-wrapper {
-    @apply my-8 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700;
+    @apply my-8 p-4 border;
+    background-color: hsl(var(--card));
+    border-color: hsl(var(--border));
+    /* No border-radius - sharp corners */
   }
 
   .mdpage-chart {
@@ -154,7 +197,8 @@
   }
 
   .article-prose img {
-    @apply max-w-full h-auto rounded-lg mx-auto my-8;
+    @apply max-w-full h-auto mx-auto my-8;
+    /* No border-radius - sharp corners */
   }
 
   .article-prose table {
@@ -163,38 +207,54 @@
 
   .article-prose th,
   .article-prose td {
-    @apply border border-gray-300 dark:border-gray-600 px-4 py-2 text-left;
+    @apply border px-4 py-2 text-left;
+    border-color: hsl(var(--border));
+    font-family: 'Geist Mono', monospace;
+    font-size: 15px;
   }
 
   .article-prose th {
-    @apply bg-gray-100 dark:bg-gray-800 font-heading font-semibold;
+    background-color: hsl(var(--muted));
+    @apply font-semibold;
   }
 
   /* Footnotes */
   .article-prose .footnote-ref {
-    @apply text-blue-600 dark:text-blue-400 no-underline;
+    color: hsl(var(--primary));
+    text-decoration: none;
   }
 
   .article-prose .footnotes {
-    @apply mt-12 pt-6 border-t border-gray-300 dark:border-gray-600;
+    @apply mt-12 pt-6 border-t;
+    border-color: hsl(var(--border));
   }
 
   .article-prose .footnotes p {
-    @apply text-base leading-relaxed;
+    @apply text-sm;
+    line-height: 1.7;
   }
 }
 
 /* Upload page specific styles */
 .upload-container {
-  @apply min-h-screen bg-gray-50 dark:bg-gray-950 py-12 px-4;
+  @apply min-h-screen py-12 px-4;
+  background-color: hsl(var(--background));
 }
 
 .drop-zone {
-  @apply border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-12 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer bg-white dark:bg-gray-900;
+  @apply border-2 border-dashed p-12 text-center transition-colors cursor-pointer;
+  border-color: hsl(var(--border));
+  background-color: hsl(var(--card));
+  /* No border-radius - sharp corners */
+}
+
+.drop-zone:hover {
+  border-color: hsl(var(--primary));
 }
 
 .drop-zone.drag-over {
-  @apply border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-950/20;
+  border-color: hsl(var(--primary));
+  background-color: hsl(var(--primary) / 0.05);
 }
 
 /* Editor styles */

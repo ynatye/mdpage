@@ -19,9 +19,10 @@ export default {
     },
     extend: {
       fontFamily: {
-        'heading': ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        'body': ['Newsreader', 'Georgia', 'Times New Roman', 'serif'],
-        'mono': ['JetBrains Mono', 'SF Mono', 'Consolas', 'monospace'],
+        'sans': ['Geist Mono', 'monospace'],
+        'heading': ['Geist Mono', 'monospace'],
+        'body': ['Geist Mono', 'monospace'],
+        'mono': ['Geist Mono', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -59,9 +60,11 @@ export default {
         },
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        'none': '0',
+        DEFAULT: '0',
+        lg: '0',
+        md: '0',
+        sm: '0',
       },
       keyframes: {
         "accordion-down": {

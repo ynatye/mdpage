@@ -46,8 +46,17 @@ export default function Article() {
         updateMetaTag('name', 'twitter:description', data.meta.description)
 
       } catch (err) {
-        console.error('Error fetching article:', err)
-        setError(err.message)
+        console.error('Error fetching article:', err);
+        
+        // Provide more specific error messages
+        let errorMessage = 'Article not found';
+        if (err.name === 'TypeError' && err.message.includes('fetch')) {
+          errorMessage = 'Unable to connect to server';
+        } else if (err.message) {
+          errorMessage = err.message;
+        }
+        
+        setError(errorMessage);
       } finally {
         setLoading(false)
       }

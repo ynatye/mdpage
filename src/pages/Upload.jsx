@@ -137,11 +137,32 @@ export default function Upload() {
           },
         })
       } else {
-        toast.error(data.error || 'Failed to publish article')
+        // Show detailed error message if available
+        let errorMessage = data.error || 'Failed to publish article';
+        if (data.details) {
+          errorMessage += ': ' + data.details;
+        }
+        if (data.suggestion) {
+          errorMessage += ' ' + data.suggestion;
+        }
+        toast.error(errorMessage);
+        console.error('Publish error details:', data);
       }
     } catch (error) {
-      console.error('Publish error:', error)
-      toast.error('Failed to publish article')
+      console.error('Publish error:', error);
+      
+      // Provide specific error messages based on the error type
+      let errorMessage = 'Failed to publish article';
+      
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        errorMessage = 'Network error: Unable to connect to the server. Please check your internet connection.';
+      } else if (error.name === 'AbortError') {
+        errorMessage = 'Request timed out. Please try again.';
+      } else if (error.message) {
+        errorMessage = 'Error: ' + error.message;
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setIsPublishing(false)
     }

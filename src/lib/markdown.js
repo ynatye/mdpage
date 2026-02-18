@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
+import footnote from 'markdown-it-footnote';
 
 let chartCounter = 0;
 
@@ -28,11 +29,13 @@ const defaultFence = md.renderer.rules.fence;
 md.renderer.rules.fence = function (tokens, idx, options, env, self) {
   const token = tokens[idx];
   if (token.info.trim() === 'chart') {
-    // highlight already returned the div HTML, just return it directly
     return md.options.highlight(token.content, 'chart');
   }
   return defaultFence(tokens, idx, options, env, self);
 };
+
+// Add footnote plugin
+md.use(footnote);
 
 // Convert ASCII box tables (+---+---+) to proper markdown tables
 function convertAsciiTables(text) {
@@ -118,6 +121,26 @@ export function destroyCharts(container) {
 export function render(markdown) {
   chartCounter = 0;
   return md.render(preprocess(markdown));
+}
+
+// Render markdown content, stripping the first H1 to avoid duplication with header
+export function renderContent(markdown) {
+  chartCounter = 0;
+  const processed = preprocess(markdown);
+  const lines = processed.split('\n');
+  let contentLines = [];
+  let foundFirstH1 = false;
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!foundFirstH1 && trimmed.startsWith('# ')) {
+      foundFirstH1 = true;
+      continue; // Skip the first H1
+    }
+    contentLines.push(line);
+  }
+  
+  return md.render(contentLines.join('\n'));
 }
 
 // Extract title from first H1 heading

@@ -14,6 +14,21 @@ const PORT = 3456;
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// CORS middleware for development
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  
+  next();
+});
+
 // Serve static files from dist in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'dist')));
@@ -138,13 +153,35 @@ app.post('/api/publish', async (req, res) => {
     
     // More specific error messages
     if (error.code === 'ENOSPC') {
-      return res.status(507).json({ error: 'Server storage full' });
+      return res.status(507).json({ 
+        error: 'Server storage full', 
+        details: 'The server has run out of disk space. Please try again later.' 
+      });
     }
     if (error.code === 'EACCES') {
-      return res.status(500).json({ error: 'Server permission error' });
+      return res.status(500).json({ 
+        error: 'Server permission error', 
+        details: 'The server does not have permission to write files.' 
+      });
+    }
+    if (error.code === 'EMFILE' || error.code === 'ENFILE') {
+      return res.status(500).json({ 
+        error: 'Too many open files', 
+        details: 'The server is handling too many requests. Please try again in a moment.' 
+      });
     }
     
-    res.status(500).json({ error: 'Failed to publish article' });
+    // For development, include more error details
+    const errorDetails = process.env.NODE_ENV === 'production' ? undefined : {
+      message: error.message,
+      stack: error.stack
+    };
+    
+    res.status(500).json({ 
+      error: 'Failed to publish article',
+      details: 'An unexpected error occurred while publishing the article.',
+      debug: errorDetails
+    });
   }
 });
 

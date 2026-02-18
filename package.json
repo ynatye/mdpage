@@ -10,7 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "test": "node scripts/validate-publish.js"
+    "test": "node scripts/validate-publish.js",
+    "test:backend": "node scripts/test-backend.js",
+    "test:all": "node scripts/validate-publish.js && node scripts/test-backend.js"
   },
   "keywords": [
     "markdown",

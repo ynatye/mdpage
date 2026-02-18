@@ -36,8 +36,14 @@ export default function Upload() {
 
   // ── Slug auto-generation from title (only when user hasn't overridden it) ──
   useEffect(() => {
+    // When the editor is cleared, reset slug + manual flag so a fresh article
+    // gets a clean auto-generated slug (regardless of prior manual override).
+    if (!markdown.trim()) {
+      setSlug('')
+      setSlugManual(false)
+      return
+    }
     if (slugManual) return
-    if (!markdown) return
     const title = extractTitle(markdown)
     if (title && title !== 'Untitled') {
       setSlug(generateSlug(title))
@@ -120,6 +126,10 @@ export default function Upload() {
       if (response.ok) {
         const fullUrl = `${window.location.origin}${data.url}`
         setPublishedUrl(fullUrl)
+        // Sync slug field with the server-canonicalized slug in case the
+        // server sanitized the user's custom slug differently (e.g., stripped
+        // special chars or collapsed hyphens).
+        setSlug(data.slug)
         toast.success(data.updated ? 'Article updated!' : 'Article published!', {
           action: {
             label: 'Copy URL',

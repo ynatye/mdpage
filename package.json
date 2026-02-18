@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:server\"",
     "dev:vite": "vite",
-    "dev:server": "nodemon --watch server.js --watch lib/ server.js",
+    "dev:server": "nodemon --watch server.js --watch lib/ --watch src/lib/ server.js",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node scripts/validate-publish.js"
   },
   "keywords": [
     "markdown",

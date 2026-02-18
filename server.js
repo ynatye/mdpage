@@ -68,6 +68,22 @@ async function saveIndex(index) {
   await fs.writeFile('./data/index.json', JSON.stringify(index, null, 2));
 }
 
+// Simple async mutex — serialises concurrent index.json reads/writes so that
+// two simultaneous publish requests cannot interleave their load→mutate→save
+// sequences and silently drop each other's changes.
+let _indexLock = Promise.resolve();
+async function withIndexLock(fn) {
+  const prev = _indexLock;
+  let release;
+  _indexLock = new Promise((r) => { release = r; });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 // API Routes
 // POST /api/publish - Publish article
 app.post('/api/publish', async (req, res) => {
@@ -111,29 +127,36 @@ app.post('/api/publish', async (req, res) => {
       }
     }
 
-    const index = await loadIndex();
-    const isUpdate = !!index[slug];
-
-    // Extract metadata
+    // Pre-compute metadata outside the lock (no I/O, safe to do here)
     const description = extractDescription(markdown);
     const readingTime = estimateReadingTime(markdown);
-    const createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
-    const updatedAt = isUpdate ? new Date().toISOString() : undefined;
 
-    // Save markdown file
+    // Write the markdown file before acquiring the index lock.
+    // Two concurrent writes to the same slug will race at the OS level;
+    // the last writer wins, which is acceptable (same-slug = same article).
     const articlePath = path.join('./data/articles', `${slug}.md`);
     await fs.writeFile(articlePath, markdown, 'utf8');
 
-    // Update index
-    index[slug] = {
-      slug,
-      title,
-      description,
-      ...(updatedAt && { updatedAt }),
-      createdAt,
-      readingTime
-    };
-    await saveIndex(index);
+    // Serialise index load → mutate → save under a mutex so concurrent
+    // publishes for *different* slugs cannot clobber each other's entries.
+    let isUpdate;
+    await withIndexLock(async () => {
+      const index = await loadIndex();
+      isUpdate = !!index[slug];
+
+      const createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
+      const updatedAt = isUpdate ? new Date().toISOString() : undefined;
+
+      index[slug] = {
+        slug,
+        title,
+        description,
+        ...(updatedAt && { updatedAt }),
+        createdAt,
+        readingTime,
+      };
+      await saveIndex(index);
+    });
 
     res.json({ 
       success: true, 

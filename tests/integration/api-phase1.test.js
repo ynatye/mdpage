@@ -4,9 +4,12 @@
  * Integration tests for Phase 1 API contracts.
  * Requires a running server at SERVER_URL (default: http://localhost:3456).
  *
- * Tests skip gracefully when:
- *   - Server is not reachable
- *   - A Phase 1 feature (tier, view tracking, lifecycle) is not yet implemented
+ * Strict mode is ON by default (INTEGRATION_STRICT_PHASE1=1 implied):
+ *   - server unreachable => hard failure
+ *   - missing critical Phase 1 contracts => hard failure
+ *
+ * Exploratory mode (INTEGRATION_STRICT_PHASE1=0) allows skips for incomplete
+ * Phase 1 endpoints, but should not be used in CI.
  *
  * Coverage:
  *   [API-01]  POST /api/publish — basic publish (current, must pass now)
@@ -26,21 +29,22 @@
  * Or:  SERVER_URL=http://your-server node tests/integration/api-phase1.test.js
  */
 
-import { TestRunner, apiFetch, serverIsReachable, makeArticle, sleep } from '../helpers/test-utils.js';
-import { isFreeTierSlug, looksLikePaidSlug } from '../helpers/slug-policy.js';
+import { TestRunner, apiFetch, serverIsReachable, makeArticle } from '../helpers/test-utils.js';
+import { isFreeTierSlug } from '../helpers/slug-policy.js';
 
 const t = new TestRunner('API Phase 1 Integration');
+const STRICT_PHASE1 = process.env.INTEGRATION_STRICT_PHASE1 !== '0';
 
 // ---------------------------------------------------------------------------
 // Preflight
 // ---------------------------------------------------------------------------
 const reachable = await serverIsReachable();
 if (!reachable) {
-  console.log('\n⚠️  Server not reachable. Start with: node server.js\n');
-  console.log('All integration tests will be SKIPPED.\n');
-  t.skip('all tests', 'server not reachable');
-  t.summary();
-  process.exit(0);
+  console.error('\n✗ Server not reachable at SERVER_URL.');
+  console.error('  Expected /healthz to respond before running integration checks.');
+  console.error('  Hint: run `npm run test:integration` (self-managed local server)');
+  console.error('  Or set SERVER_URL to a live server that exposes /healthz.\n');
+  process.exit(1);
 }
 
 console.log('\n[API Phase 1 Integration Tests]\n');
@@ -117,7 +121,18 @@ let phase1Implemented = false;
 }
 
 if (!phase1Implemented) {
-  // Mark all Phase 1 tests as skipped
+  const reason = 'Phase 1 contracts unavailable (tier/adEnabled in publish response missing)';
+
+  if (STRICT_PHASE1) {
+    t.ok(false, '[API-Phase1-Required] Strict mode requires full Phase 1 API support', {
+      reason,
+      hint: 'Set INTEGRATION_STRICT_PHASE1=0 only for temporary exploratory runs',
+    });
+    t.summary();
+    process.exit(1);
+  }
+
+  // Non-strict exploratory mode only
   const phase1Tests = [
     '[API-02] free tier → suffixed slug',
     '[API-03] paid tier → clean slug',
@@ -128,7 +143,7 @@ if (!phase1Implemented) {
     '[API-08] POST /view idempotent',
     '[API-12] GET /internal/lifecycle/:slug',
   ];
-  phase1Tests.forEach((name) => t.skip(name, 'Phase 1 not yet implemented'));
+  phase1Tests.forEach((name) => t.skip(name, reason));
 
   t.summary();
   process.exit(t.failed > 0 ? 1 : 0);
@@ -268,7 +283,14 @@ console.log('\n── Internal Lifecycle ──');
 if (freeSlug) {
   const res = await apiFetch(`/api/internal/lifecycle/${freeSlug}`);
   if (res.status === 404 || res.status === 501) {
-    t.skip('[API-12] GET /internal/lifecycle/:slug', 'endpoint not implemented yet');
+    if (STRICT_PHASE1) {
+      t.ok(false, '[API-12] GET /internal/lifecycle/:slug is required in strict mode', {
+        status: res.status,
+        body: res.body,
+      });
+    } else {
+      t.skip('[API-12] GET /internal/lifecycle/:slug', 'endpoint not implemented yet');
+    }
   } else {
     t.ok(res.ok, '[API-12] GET /internal/lifecycle/:slug → 200', { status: res.status });
     t.ok(typeof res.body?.status === 'string', '[API-12b] Response has status field');

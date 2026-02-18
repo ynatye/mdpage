@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
+import { hydrateCharts } from '@/lib/markdown'
 
 export default function Article() {
   const { slug } = useParams()
@@ -106,6 +107,15 @@ export default function Article() {
     return null
   }
 
+  const articleContentRef = useRef(null)
+
+  // Hydrate charts after article renders
+  useEffect(() => {
+    if (article && articleContentRef.current) {
+      hydrateCharts(articleContentRef.current)
+    }
+  }, [article])
+
   // Format date
   const date = new Date(article.meta.createdAt).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -130,6 +140,7 @@ export default function Article() {
         </header>
 
         <div 
+          ref={articleContentRef}
           className="article-prose"
           dangerouslySetInnerHTML={{ __html: article.content }}
         />

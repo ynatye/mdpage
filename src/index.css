@@ -145,6 +145,14 @@
     @apply my-12 border-0 h-px bg-gray-300 dark:bg-gray-600;
   }
 
+  .mdpage-chart-wrapper {
+    @apply my-8 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700;
+  }
+
+  .mdpage-chart-wrapper canvas {
+    @apply w-full;
+  }
+
   .article-prose img {
     @apply max-w-full h-auto rounded-lg mx-auto my-8;
   }

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { render, extractTitle, generateSlug } from "@/lib/markdown"
+import { render, extractTitle, generateSlug, hydrateCharts, destroyCharts } from "@/lib/markdown"
 import { toast } from "sonner"
 
 export default function Upload() {
@@ -15,6 +15,7 @@ export default function Upload() {
   const [isMobile, setIsMobile] = useState(false)
   const fileInputRef = useRef(null)
   const editorRef = useRef(null)
+  const previewRef = useRef(null)
 
   // Debounced preview rendering
   const debounceTimer = useRef(null)
@@ -42,6 +43,14 @@ export default function Upload() {
       updatePreview(markdown)
     }
   }, [markdown, slug, updatePreview])
+
+  // Hydrate charts after preview renders
+  useEffect(() => {
+    if (renderedHTML && previewRef.current) {
+      destroyCharts(previewRef.current)
+      hydrateCharts(previewRef.current)
+    }
+  }, [renderedHTML])
 
   // Detect mobile screen size
   useEffect(() => {
@@ -274,6 +283,7 @@ You can also drag and drop a .md file onto this editor."
             {renderedHTML ? (
               <div className="p-6">
                 <div 
+                  ref={previewRef}
                   className="article-prose"
                   dangerouslySetInnerHTML={{ __html: renderedHTML }}
                 />

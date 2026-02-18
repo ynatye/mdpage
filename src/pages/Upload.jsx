@@ -5,6 +5,7 @@ import { render, extractTitle, generateSlug } from '@/lib/markdown'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import { toast } from 'sonner'
 import MdpageLogo from '@/components/MdpageLogo'
+import TierSelector from '@/components/TierSelector'
 
 export default function Upload() {
   const [markdown, setMarkdown] = useState('')
@@ -16,6 +17,8 @@ export default function Upload() {
   const [dragOver, setDragOver] = useState(false)
   const [mobileView, setMobileView] = useState('editor')
   const [isMobile, setIsMobile] = useState(false)
+  // ── Tier state (defaults to free; can be toggled before publish) ──────────
+  const [tier, setTier] = useState('free')
 
   const fileInputRef = useRef(null)
   const editorRef = useRef(null)
@@ -118,6 +121,8 @@ export default function Upload() {
         body: JSON.stringify({
           markdown: markdown.trim(),
           slug: slug.trim() || undefined,
+          // ── Issue #4: include tier in publish payload ─────────────────────
+          tier,
         }),
       })
 
@@ -166,6 +171,11 @@ export default function Upload() {
   const openArticle = () => window.open(publishedUrl, '_blank')
   const canPublish = markdown.trim().length > 0
 
+  // ── Slug display hint for free tier ───────────────────────────────────────
+  // Free slugs get a random suffix appended by the backend. Show the user
+  // a visual hint so they understand the final URL will differ from the base.
+  const showFreeSuffix = tier === 'free' && slug.trim().length > 0
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -173,7 +183,12 @@ export default function Upload() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
         <MdpageLogo className="h-8 w-auto text-foreground select-none" />
 
-        <div className="flex items-center gap-4 flex-1 max-w-md mx-4">
+        {/* ── Slug + Tier area ── */}
+        <div className="flex items-center gap-3 flex-1 max-w-xl mx-4">
+          {/* Tier selector */}
+          <TierSelector tier={tier} onChange={setTier} />
+
+          {/* Slug field */}
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <span className="text-sm text-muted-foreground shrink-0">mdpage.com/</span>
             <Input
@@ -186,6 +201,15 @@ export default function Upload() {
               placeholder="article-slug"
               className="border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-sm min-w-0"
             />
+            {/* Free suffix hint */}
+            {showFreeSuffix && (
+              <span
+                className="shrink-0 text-sm text-muted-foreground/50 select-none"
+                title="A random suffix will be appended to your slug for free posts"
+              >
+                -{'{suffix}'}
+              </span>
+            )}
           </div>
 
           {publishedUrl && (
@@ -212,6 +236,30 @@ export default function Upload() {
           {isPublishing ? 'Publishing…' : 'Publish'}
         </Button>
       </div>
+
+      {/* ── Tier explanation strip (visible below header, unobtrusive) ── */}
+      {tier === 'free' && (
+        <div className="px-6 py-1.5 bg-muted/30 border-b border-border text-xs text-muted-foreground flex items-center gap-1.5">
+          <span>Free post</span>
+          <span aria-hidden>·</span>
+          <span>Ad-supported</span>
+          <span aria-hidden>·</span>
+          <span>Slug gets a random suffix</span>
+          <span aria-hidden>·</span>
+          <span>Expires if unread after 30 days</span>
+        </div>
+      )}
+      {tier === 'paid' && (
+        <div className="px-6 py-1.5 bg-primary/5 border-b border-border text-xs text-muted-foreground flex items-center gap-1.5">
+          <span className="text-primary font-medium">Paid post</span>
+          <span aria-hidden>·</span>
+          <span>Ad-free</span>
+          <span aria-hidden>·</span>
+          <span>Clean custom slug</span>
+          <span aria-hidden>·</span>
+          <span>Permanent retention</span>
+        </div>
+      )}
 
       {/* ── Mobile tabs ── */}
       {isMobile && (

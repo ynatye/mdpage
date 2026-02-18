@@ -29,10 +29,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files from dist in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'dist')));
-}
+// Serve static files from dist
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
 
 // Ensure data directories exist
 async function ensureDataDirs() {
@@ -235,36 +234,9 @@ app.get('/api/articles/:slug', async (req, res) => {
   }
 });
 
-// Root route for production SPA
-app.get('/', async (req, res) => {
-  try {
-    if (process.env.NODE_ENV === 'production') {
-      // In production, serve the built React app
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    } else {
-      // In development, let Vite handle the frontend
-      res.status(404).send('Development mode: Use Vite dev server on port 5173');
-    }
-  } catch (error) {
-    console.error('SPA fallback error:', error);
-    res.status(500).send('Error serving application');
-  }
-});
-
 // SPA fallback - serve React app for all non-API routes
-app.get('/:slug', async (req, res) => {
-  try {
-    if (process.env.NODE_ENV === 'production') {
-      // In production, serve the built React app
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    } else {
-      // In development, let Vite handle the frontend
-      res.status(404).send('Development mode: Use Vite dev server on port 5173');
-    }
-  } catch (error) {
-    console.error('SPA fallback error:', error);
-    res.status(500).send('Error serving application');
-  }
+app.use((req, res) => {
+  res.sendFile('index.html', { root: path.join(__dirname, 'dist') });
 });
 
 // Start server

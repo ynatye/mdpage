@@ -7,6 +7,10 @@ export default function Article() {
   const [article, setArticle] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const articleContentRef = useRef(null)
+
+  // Hydrate charts after article renders
+  useChartHydration(articleContentRef, [article])
 
   useEffect(() => {
     const fetchArticle = async () => {
@@ -115,11 +119,6 @@ export default function Article() {
   if (!article) {
     return null
   }
-
-  const articleContentRef = useRef(null)
-
-  // Hydrate charts after article renders
-  useChartHydration(articleContentRef, [article])
 
   // Format date
   const date = new Date(article.meta.createdAt).toLocaleDateString('en-US', {

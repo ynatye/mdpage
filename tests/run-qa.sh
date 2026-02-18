@@ -97,6 +97,9 @@ if [[ "$MODE" == "all" || "$MODE" == "unit" ]]; then
 
   section "View Deduplication [VD-01..VD-10]"
   run_node_test "$TESTS_DIR/unit/view-dedup.test.js" "view-dedup.test.js"
+
+  section "Internal Stats [ST-01..ST-04]"
+  run_node_test "$TESTS_DIR/unit/internal-stats.test.js" "internal-stats.test.js"
 fi
 
 # =============================================================================

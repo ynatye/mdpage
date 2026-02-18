@@ -29,6 +29,7 @@ import { normalizeSlugBase, resolveSlug } from './lib/slug.js';
 import { recordView, getUniqueViewCount, getViewData } from './lib/views.js';
 import { evaluateArticle, runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
 import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
+import { computeInternalStats } from './lib/stats.js';
 import log from './lib/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,6 +66,9 @@ async function ensureDataDirs() {
   try { await fs.access('./data/index.json'); } catch {
     await fs.writeFile('./data/index.json', '{}');
   }
+  try { await fs.access('./data/lifecycle-runs.json'); } catch {
+    await fs.writeFile('./data/lifecycle-runs.json', '[]');
+  }
 }
 
 // ── Index helpers ─────────────────────────────────────────────────────────────
@@ -81,6 +85,49 @@ async function saveIndex(index) {
   const tmp = './data/index.json.tmp';
   await fs.writeFile(tmp, JSON.stringify(index, null, 2));
   await fs.rename(tmp, './data/index.json');
+}
+
+async function loadLifecycleRuns() {
+  try {
+    const raw = await fs.readFile('./data/lifecycle-runs.json', 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+let _lifecycleRunLock = Promise.resolve();
+async function withLifecycleRunLock(fn) {
+  const prev = _lifecycleRunLock;
+  let release;
+  _lifecycleRunLock = new Promise((r) => { release = r; });
+  await prev;
+  try { return await fn(); }
+  finally { release(); }
+}
+
+async function appendLifecycleRun(summary) {
+  await withLifecycleRunLock(async () => {
+    const runs = await loadLifecycleRuns();
+    runs.push({
+      ts: new Date().toISOString(),
+      evaluated: Number(summary?.evaluated ?? 0),
+      transitions: {
+        at_risk: Number(summary?.transitions?.at_risk ?? 0),
+        recovered: Number(summary?.transitions?.recovered ?? 0),
+        expired: Number(summary?.transitions?.expired ?? 0),
+        no_change: Number(summary?.transitions?.no_change ?? 0),
+        skipped: Number(summary?.transitions?.skipped ?? 0),
+      },
+      errors: Array.isArray(summary?.errors) ? summary.errors.length : 0,
+    });
+
+    const capped = runs.slice(-500);
+    const tmp = './data/lifecycle-runs.json.tmp';
+    await fs.writeFile(tmp, JSON.stringify(capped, null, 2));
+    await fs.rename(tmp, './data/lifecycle-runs.json');
+  });
 }
 
 // Serialised index read-modify-write mutex (prevents interleaving concurrent publishes)
@@ -468,6 +515,7 @@ app.get('/api/internal/lifecycle/:slug', async (req, res) => {
 app.post('/api/internal/lifecycle/run', async (req, res) => {
   try {
     const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+    await appendLifecycleRun(summary);
     return res.json(summary);
   } catch (err) {
     log.error('lifecycle.run.error', { error: err.message });
@@ -507,32 +555,72 @@ app.get('/api/internal/config', (_req, res) => {
  */
 app.get('/api/internal/stats', async (_req, res) => {
   try {
-    const indexPath = './data/index.json';
-    let index = {};
-    try {
-      const raw = await fs.readFile(indexPath, 'utf8');
-      index = JSON.parse(raw);
-    } catch (readErr) {
-      // No articles yet — return zeroed stats
-      log.warn('stats.index.read.empty', { reason: readErr.message });
-    }
+    const index = await loadIndex();
+    const runs = await loadLifecycleRuns();
+    const stats = computeInternalStats(index, runs);
 
-    const entries = Object.values(index);
-    const stats = {
-      total:     entries.length,
-      published: entries.filter(e => (e.status ?? 'published') === 'published').length,
-      at_risk:   entries.filter(e => e.status === 'at_risk').length,
-      expired:   entries.filter(e => e.status === 'expired').length,
-      free:      entries.filter(e => e.tier === 'free').length,
-      paid:      entries.filter(e => e.tier === 'paid').length,
-      ts:        new Date().toISOString(),
-    };
-
-    log.info('stats.requested', { total: stats.total });
+    log.info('stats.requested', {
+      total: stats.total,
+      atRisk: stats.at_risk,
+      expiringSoon: stats.expiringSoon.length,
+    });
     return res.json(stats);
   } catch (err) {
     log.error('stats.error', { error: err.message });
     return res.status(500).json({ error: 'Error computing stats' });
+  }
+});
+
+/**
+ * GET /internal
+ *
+ * Minimal read-only operations dashboard scaffold.
+ * Auth: set INTERNAL_DASHBOARD_TOKEN and pass via `?token=` or `x-internal-token` header.
+ */
+app.get('/internal', async (req, res) => {
+  const expected = process.env.INTERNAL_DASHBOARD_TOKEN;
+  if (expected) {
+    const provided = req.query.token || req.get('x-internal-token');
+    if (provided !== expected) {
+      return res.status(401).send('<h1>401 — Unauthorized</h1><p>Missing or invalid internal token.</p>');
+    }
+  }
+
+  try {
+    const stats = computeInternalStats(await loadIndex(), await loadLifecycleRuns());
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+    const expiringRows = stats.expiringSoon.map((p) =>
+      `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${p.daysRemaining}</td><td>${esc(p.expiresAt)}</td></tr>`
+    ).join('') || '<tr><td colspan="4">No posts expiring in next 7 days</td></tr>';
+
+    const topRows = stats.topPosts30d.map((p) =>
+      `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${p.last30dUniqueViews}</td><td>${esc(p.status)}</td></tr>`
+    ).join('') || '<tr><td colspan="4">No posts yet</td></tr>';
+
+    return res.type('html').send(`<!doctype html>
+<html><head><meta charset="utf-8" /><title>mdpage internal</title>
+<style>body{font-family:system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 12px;color:#111}table{border-collapse:collapse;width:100%;margin:12px 0 24px}th,td{border:1px solid #ddd;padding:8px;text-align:left}h1,h2{margin:0 0 12px}.cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:16px 0}.card{border:1px solid #ddd;padding:10px;border-radius:8px}small{color:#555}</style>
+</head><body>
+<h1>mdpage internal (scaffold)</h1>
+<small>Snapshot: ${esc(stats.ts)} · Last lifecycle run: ${esc(stats.lastLifecycleRunAt ?? 'never')}</small>
+<div class="cards">
+<div class="card"><strong>Total</strong><div>${stats.total}</div></div>
+<div class="card"><strong>Published</strong><div>${stats.published}</div></div>
+<div class="card"><strong>At risk</strong><div>${stats.at_risk}</div></div>
+<div class="card"><strong>Expired</strong><div>${stats.expired}</div></div>
+<div class="card"><strong>Free</strong><div>${stats.free}</div></div>
+<div class="card"><strong>Paid</strong><div>${stats.paid}</div></div>
+</div>
+<p><strong>Transitions (24h)</strong> — at_risk: ${stats.transitions24h.at_risk}, recovered: ${stats.transitions24h.recovered}, expired: ${stats.transitions24h.expired}</p>
+<h2>Expiring soon (≤ 7 days)</h2>
+<table><thead><tr><th>Slug</th><th>Title</th><th>Days left</th><th>Expires at</th></tr></thead><tbody>${expiringRows}</tbody></table>
+<h2>Top posts (30d uniques)</h2>
+<table><thead><tr><th>Slug</th><th>Title</th><th>30d uniques</th><th>Status</th></tr></thead><tbody>${topRows}</tbody></table>
+</body></html>`);
+  } catch (err) {
+    log.error('internal.dashboard.error', { error: err.message });
+    return res.status(500).send('<h1>500 — Internal dashboard error</h1>');
   }
 });
 
@@ -570,7 +658,8 @@ function scheduleLifecycleSweep() {
   const startupDelay = process.env.NODE_ENV === 'test' ? 0 : 30_000;
   setTimeout(async () => {
     try {
-      await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+      const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+      await appendLifecycleRun(summary);
     } catch (err) {
       log.error('lifecycle.startup.error', { error: err.message });
     }
@@ -579,7 +668,8 @@ function scheduleLifecycleSweep() {
   // Then recur on the configured interval
   const timer = setInterval(async () => {
     try {
-      await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+      const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+      await appendLifecycleRun(summary);
     } catch (err) {
       log.error('lifecycle.interval.error', { error: err.message });
     }

@@ -18,19 +18,28 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
-  render,
   renderContent,
   extractTitle,
-  generateSlug,
   extractDescription,
   estimateReadingTime,
 } from './lib/markdown.js';
 import { normalizeSlugBase, resolveSlug } from './lib/slug.js';
 import { recordView, getUniqueViewCount, getViewData } from './lib/views.js';
-import { evaluateArticle, runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
+import { runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
 import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
 import { computeInternalStats } from './lib/stats.js';
 import log from './lib/logger.js';
+import {
+  apiInternalAuth,
+  dashboardAuth,
+  buildLoginPage,
+  buildSetCookieHeader,
+  buildClearCookieHeader,
+  constantTimeEqual,
+  createSession,
+  getCookieName,
+  htmlEsc,
+} from './lib/internal-auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -453,6 +462,10 @@ app.post('/api/articles/:slug/view', viewRateLimit(), async (req, res) => {
 
 // ── Internal / admin endpoints ────────────────────────────────────────────────
 
+// Auth for /api/internal/* and /internal routes is handled by lib/internal-auth.js.
+// apiInternalAuth()  → JSON 401 on failure (x-internal-token header or session cookie)
+// dashboardAuth()    → HTML login form on failure (session cookie or ?token= redirect)
+
 /**
  * GET /api/internal/lifecycle/:slug
  *
@@ -470,7 +483,7 @@ app.post('/api/articles/:slug/view', viewRateLimit(), async (req, res) => {
  *   viewData:           object   — raw daily view buckets
  * }
  */
-app.get('/api/internal/lifecycle/:slug', async (req, res) => {
+app.get('/api/internal/lifecycle/:slug', apiInternalAuth(), async (req, res) => {
   try {
     const { slug } = req.params;
     const index    = await loadIndex();
@@ -512,7 +525,7 @@ app.get('/api/internal/lifecycle/:slug', async (req, res) => {
  *   errors:       Array<{ slug, error }>
  * }
  */
-app.post('/api/internal/lifecycle/run', async (req, res) => {
+app.post('/api/internal/lifecycle/run', apiInternalAuth(), async (req, res) => {
   try {
     const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
     await appendLifecycleRun(summary);
@@ -528,7 +541,7 @@ app.post('/api/internal/lifecycle/run', async (req, res) => {
  *
  * Expose current runtime configuration for debugging.
  */
-app.get('/api/internal/config', (_req, res) => {
+app.get('/api/internal/config', apiInternalAuth(), (_req, res) => {
   return res.json({
     lifecycle: lifecycleConfig,
     rateLimit: rateLimitConfig,
@@ -553,7 +566,7 @@ app.get('/api/internal/config', (_req, res) => {
  *     ts:        string,   // ISO timestamp of snapshot
  *   }
  */
-app.get('/api/internal/stats', async (_req, res) => {
+app.get('/api/internal/stats', apiInternalAuth(), async (_req, res) => {
   try {
     const index = await loadIndex();
     const runs = await loadLifecycleRuns();
@@ -572,55 +585,305 @@ app.get('/api/internal/stats', async (_req, res) => {
 });
 
 /**
- * GET /internal
+ * POST /internal/auth
  *
- * Minimal read-only operations dashboard scaffold.
- * Auth: set INTERNAL_DASHBOARD_TOKEN and pass via `?token=` or `x-internal-token` header.
+ * Login handler for the dashboard.  Accepts token from POST body (not URL),
+ * validates it, issues a signed HttpOnly session cookie, then redirects to /internal.
+ *
+ * Using POST keeps the token out of the URL (no browser history, no server logs).
  */
-app.get('/internal', async (req, res) => {
-  const expected = process.env.INTERNAL_DASHBOARD_TOKEN;
-  if (expected) {
-    const provided = req.query.token || req.get('x-internal-token');
-    if (provided !== expected) {
-      return res.status(401).send('<h1>401 — Unauthorized</h1><p>Missing or invalid internal token.</p>');
-    }
+app.post('/internal/auth', express.urlencoded({ extended: false }), (req, res) => {
+  const expected = (process.env.INTERNAL_DASHBOARD_TOKEN ?? '').trim();
+  // If no token is configured, redirect straight to dashboard (no auth required)
+  if (!expected) { res.setHeader('Location', '/internal'); return res.status(302).end(); }
+
+  const provided = (req.body?.token ?? '').trim();
+  const isProd   = process.env.NODE_ENV === 'production';
+  const cookieName = getCookieName(isProd);
+
+  if (!constantTimeEqual(provided, expected)) {
+    // Wrong token → re-show login page with error message
+    return res.status(401).type('html').send(buildLoginPage('Invalid token. Please try again.'));
   }
 
+  // Valid token → issue session cookie and redirect to clean URL
+  const session = createSession(expected);
+  res.setHeader('Set-Cookie', buildSetCookieHeader(cookieName, session, isProd));
+  res.setHeader('Location', '/internal');
+  return res.status(302).end();
+});
+
+/**
+ * GET /internal/logout
+ *
+ * Clear the session cookie and redirect to login page.
+ */
+app.get('/internal/logout', (req, res) => {
+  const isProd     = process.env.NODE_ENV === 'production';
+  const cookieName = getCookieName(isProd);
+  res.setHeader('Set-Cookie', buildClearCookieHeader(cookieName, isProd));
+  res.setHeader('Location', '/internal');
+  return res.status(302).end();
+});
+
+/**
+ * POST /internal/actions/lifecycle-run
+ *
+ * Dashboard-triggered lifecycle sweep.  Auth via session cookie (same as GET /internal).
+ * On completion, redirects back with a flash param.
+ */
+app.post('/internal/actions/lifecycle-run', dashboardAuth(), async (req, res) => {
   try {
-    const stats = computeInternalStats(await loadIndex(), await loadLifecycleRuns());
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+    await appendLifecycleRun(summary);
+    log.info('lifecycle.dashboard.run', summary);
+    res.setHeader('Location', '/internal?flash=lifecycle-ok');
+    return res.status(302).end();
+  } catch (err) {
+    log.error('lifecycle.dashboard.run.error', { error: err.message });
+    res.setHeader('Location', '/internal?flash=lifecycle-err');
+    return res.status(302).end();
+  }
+});
 
-    const expiringRows = stats.expiringSoon.map((p) =>
-      `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${p.daysRemaining}</td><td>${esc(p.expiresAt)}</td></tr>`
-    ).join('') || '<tr><td colspan="4">No posts expiring in next 7 days</td></tr>';
+/**
+ * GET /internal
+ *
+ * Operations dashboard.
+ * Auth: session cookie (set via POST /internal/auth) or ?token= query param (one-time,
+ * redirects to clean URL after setting cookie).  Falls back to login page.
+ * When INTERNAL_DASHBOARD_TOKEN is unset the dashboard is open with a warning banner.
+ */
+app.get('/internal', dashboardAuth(), async (req, res) => {
+  try {
+    const stats    = computeInternalStats(await loadIndex(), await loadLifecycleRuns());
+    const esc      = htmlEsc;
+    const isOpen   = !(process.env.INTERNAL_DASHBOARD_TOKEN ?? '').trim();
+    const flash    = req.query?.flash ?? '';
 
-    const topRows = stats.topPosts30d.map((p) =>
-      `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td><td>${p.last30dUniqueViews}</td><td>${esc(p.status)}</td></tr>`
-    ).join('') || '<tr><td colspan="4">No posts yet</td></tr>';
+    // ── Sub-renderers ───────────────────────────────────────────────────────
+
+    function statusBadge(status) {
+      const cls = { published: 'badge-ok', at_risk: 'badge-warn', expired: 'badge-err' }[status] ?? 'badge-muted';
+      return `<span class="badge ${cls}">${esc(status)}</span>`;
+    }
+
+    function tierBadge(tier) {
+      return `<span class="badge ${tier === 'paid' ? 'badge-paid' : 'badge-free'}">${esc(tier)}</span>`;
+    }
+
+    const flashHtml = flash === 'lifecycle-ok'
+      ? '<div class="flash flash-ok">✓ Lifecycle sweep completed successfully.</div>'
+      : flash === 'lifecycle-err'
+        ? '<div class="flash flash-err">✗ Lifecycle sweep failed — check server logs.</div>'
+        : '';
+
+    const openWarn = isOpen
+      ? '<div class="warn-banner">⚠ Dashboard is open — set <code>INTERNAL_DASHBOARD_TOKEN</code> to require authentication.</div>'
+      : '';
+
+    const expiringRows = stats.expiringSoon.length
+      ? stats.expiringSoon.map((p) => `
+        <tr>
+          <td><a href="/${esc(p.slug)}" target="_blank" rel="noopener">${esc(p.slug)}</a></td>
+          <td>${esc(p.title ?? '—')}</td>
+          <td>${tierBadge(p.tier)}</td>
+          <td class="${p.daysRemaining <= 2 ? 'text-danger' : p.daysRemaining <= 4 ? 'text-warn' : ''}">${p.daysRemaining}d</td>
+          <td class="text-mono text-muted">${esc(p.expiresAt)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="5" class="empty-cell">No posts expiring in the next 7 days</td></tr>';
+
+    const topRows = stats.topPosts30d.length
+      ? stats.topPosts30d.map((p) => `
+        <tr>
+          <td><a href="/${esc(p.slug)}" target="_blank" rel="noopener">${esc(p.slug)}</a></td>
+          <td>${esc(p.title ?? '—')}</td>
+          <td>${tierBadge(p.tier)}</td>
+          <td class="num">${p.last30dUniqueViews}</td>
+          <td>${statusBadge(p.status)}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="5" class="empty-cell">No posts published yet</td></tr>';
+
+    const logoutLink = isOpen ? '' : '<a href="/internal/logout" class="btn-logout">Sign out</a>';
+
+    // ── Page ────────────────────────────────────────────────────────────────
 
     return res.type('html').send(`<!doctype html>
-<html><head><meta charset="utf-8" /><title>mdpage internal</title>
-<style>body{font-family:system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 12px;color:#111}table{border-collapse:collapse;width:100%;margin:12px 0 24px}th,td{border:1px solid #ddd;padding:8px;text-align:left}h1,h2{margin:0 0 12px}.cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:16px 0}.card{border:1px solid #ddd;padding:10px;border-radius:8px}small{color:#555}</style>
-</head><body>
-<h1>mdpage internal (scaffold)</h1>
-<small>Snapshot: ${esc(stats.ts)} · Last lifecycle run: ${esc(stats.lastLifecycleRunAt ?? 'never')}</small>
-<div class="cards">
-<div class="card"><strong>Total</strong><div>${stats.total}</div></div>
-<div class="card"><strong>Published</strong><div>${stats.published}</div></div>
-<div class="card"><strong>At risk</strong><div>${stats.at_risk}</div></div>
-<div class="card"><strong>Expired</strong><div>${stats.expired}</div></div>
-<div class="card"><strong>Free</strong><div>${stats.free}</div></div>
-<div class="card"><strong>Paid</strong><div>${stats.paid}</div></div>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>mdpage — internal</title>
+<style>
+/* ── Reset & base ─────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;font-size:14px;line-height:1.5}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+.header{background:#1e293b;border-bottom:1px solid #334155;padding:14px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.logo{font-size:18px;font-weight:700;color:#f8fafc;letter-spacing:-0.5px;text-decoration:none}
+.logo span{color:#6366f1}
+.logo-tag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;background:#1e3a5f;color:#60a5fa;border:1px solid #1d4ed8;padding:2px 7px;border-radius:999px}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.header-ts{font-size:11px;color:#64748b}
+.btn-logout{font-size:12px;padding:5px 12px;background:transparent;border:1px solid #334155;color:#94a3b8;border-radius:6px;text-decoration:none;cursor:pointer}
+.btn-logout:hover{border-color:#6366f1;color:#a5b4fc}
+
+/* ── Layout ──────────────────────────────────────────────────────────── */
+.container{max-width:1200px;margin:0 auto;padding:20px 20px 40px}
+
+/* ── Flash / warning banners ─────────────────────────────────────────── */
+.flash,.warn-banner{padding:10px 14px;border-radius:6px;margin:0 0 16px;font-size:13px}
+.flash-ok{background:#14532d;color:#4ade80;border:1px solid #166534}
+.flash-err{background:#3f1515;color:#f87171;border:1px solid #7f1d1d}
+.warn-banner{background:#422006;color:#fbbf24;border:1px solid #92400e}
+.warn-banner code{font-size:11px;background:rgba(0,0,0,.3);padding:1px 5px;border-radius:3px}
+
+/* ── Stat cards ──────────────────────────────────────────────────────── */
+.section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:28px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px 16px}
+.card-label{font-size:11px;color:#94a3b8;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.4px}
+.card-val{font-size:28px;font-weight:700;line-height:1;color:#f1f5f9}
+.card.c-warn .card-val{color:#fbbf24}
+.card.c-err  .card-val{color:#f87171}
+.card.c-ok   .card-val{color:#34d399}
+
+/* ── Transitions bar ─────────────────────────────────────────────────── */
+.trans-bar{display:flex;gap:20px;flex-wrap:wrap;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px 18px;margin-bottom:28px;align-items:flex-end}
+.tr-item{display:flex;flex-direction:column;gap:2px}
+.tr-label{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.3px}
+.tr-val{font-size:22px;font-weight:700;line-height:1;color:#f1f5f9}
+.tr-val.orange{color:#fb923c}
+.tr-val.red{color:#f87171}
+.tr-val.green{color:#34d399}
+.trans-desc{margin-left:auto;font-size:11px;color:#475569;align-self:center;text-align:right}
+
+/* ── Actions row ─────────────────────────────────────────────────────── */
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+.btn-run{padding:8px 16px;background:#6366f1;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn-run:hover{background:#4f46e5}
+.btn-run:active{opacity:.8}
+.btn-secondary{padding:8px 14px;background:transparent;color:#94a3b8;border:1px solid #334155;border-radius:6px;font-size:13px;cursor:pointer;text-decoration:none}
+.btn-secondary:hover{border-color:#6366f1;color:#a5b4fc}
+
+/* ── Tables ──────────────────────────────────────────────────────────── */
+.section{margin-bottom:32px}
+.table-wrap{overflow-x:auto;border:1px solid #334155;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:480px}
+thead th{background:#1e293b;padding:10px 14px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:#94a3b8;white-space:nowrap;border-bottom:1px solid #334155}
+tbody tr{border-bottom:1px solid #1a2540}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(30,41,59,.6)}
+tbody td{padding:10px 14px;color:#cbd5e1;vertical-align:middle}
+.empty-cell{text-align:center;padding:28px;color:#475569;font-size:13px}
+
+/* ── Typography helpers ──────────────────────────────────────────────── */
+a{color:#818cf8;text-decoration:none}a:hover{text-decoration:underline}
+.num{font-feature-settings:"tnum";font-variant-numeric:tabular-nums;text-align:right}
+.text-muted{color:#64748b}
+.text-mono{font-family:ui-monospace,'Cascadia Code','Fira Code',monospace;font-size:12px}
+.text-warn{color:#fbbf24}
+.text-danger{color:#f87171}
+
+/* ── Status/tier badges ──────────────────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.badge-ok  {background:#14532d;color:#4ade80}
+.badge-warn{background:#451a03;color:#fb923c}
+.badge-err {background:#3f1515;color:#f87171}
+.badge-paid{background:#2e1065;color:#c4b5fd}
+.badge-free{background:#1e293b;color:#94a3b8;border:1px solid #334155}
+.badge-muted{background:#1e293b;color:#64748b;border:1px solid #334155}
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.footer{margin-top:40px;border-top:1px solid #1e293b;padding-top:16px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#475569}
+.footer a{color:#64748b}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="logo" href="/internal">md<span>page</span></a>
+  <span class="logo-tag">internal</span>
+  <div class="header-right">
+    <span class="header-ts">Snapshot: ${esc(stats.ts)}</span>
+    ${logoutLink}
+  </div>
 </div>
-<p><strong>Transitions (24h)</strong> — at_risk: ${stats.transitions24h.at_risk}, recovered: ${stats.transitions24h.recovered}, expired: ${stats.transitions24h.expired}</p>
-<h2>Expiring soon (≤ 7 days)</h2>
-<table><thead><tr><th>Slug</th><th>Title</th><th>Days left</th><th>Expires at</th></tr></thead><tbody>${expiringRows}</tbody></table>
-<h2>Top posts (30d uniques)</h2>
-<table><thead><tr><th>Slug</th><th>Title</th><th>30d uniques</th><th>Status</th></tr></thead><tbody>${topRows}</tbody></table>
-</body></html>`);
+
+<div class="container">
+
+${openWarn}
+${flashHtml}
+
+<!-- Stat cards -->
+<div class="section-label">Overview</div>
+<div class="cards">
+  <div class="card"><div class="card-label">Total</div><div class="card-val">${stats.total}</div></div>
+  <div class="card c-ok"><div class="card-label">Published</div><div class="card-val">${stats.published}</div></div>
+  <div class="card ${stats.at_risk > 0 ? 'c-warn' : ''}"><div class="card-label">At risk</div><div class="card-val">${stats.at_risk}</div></div>
+  <div class="card ${stats.expired > 0 ? 'c-err' : ''}"><div class="card-label">Expired</div><div class="card-val">${stats.expired}</div></div>
+  <div class="card"><div class="card-label">Free</div><div class="card-val">${stats.free}</div></div>
+  <div class="card"><div class="card-label">Paid</div><div class="card-val">${stats.paid}</div></div>
+</div>
+
+<!-- Transitions 24h -->
+<div class="section-label">Transitions (last 24h)</div>
+<div class="trans-bar">
+  <div class="tr-item"><span class="tr-label">→ At risk</span><span class="tr-val ${stats.transitions24h.at_risk > 0 ? 'orange' : ''}">${stats.transitions24h.at_risk}</span></div>
+  <div class="tr-item"><span class="tr-label">→ Recovered</span><span class="tr-val ${stats.transitions24h.recovered > 0 ? 'green' : ''}">${stats.transitions24h.recovered}</span></div>
+  <div class="tr-item"><span class="tr-label">→ Expired</span><span class="tr-val ${stats.transitions24h.expired > 0 ? 'red' : ''}">${stats.transitions24h.expired}</span></div>
+  <div class="trans-desc">Last sweep:<br/><strong>${esc(stats.lastLifecycleRunAt ?? 'never')}</strong></div>
+</div>
+
+<!-- Actions -->
+<div class="actions">
+  <form method="POST" action="/internal/actions/lifecycle-run" style="margin:0">
+    <button class="btn-run" type="submit">▶ Run lifecycle sweep now</button>
+  </form>
+  <a class="btn-secondary" href="/internal">↻ Refresh</a>
+  <a class="btn-secondary" href="/api/internal/stats" target="_blank">⤤ Stats JSON</a>
+</div>
+
+<!-- Expiring soon -->
+<div class="section">
+  <div class="section-label">Expiring soon (≤ 7 days)</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Slug</th><th>Title</th><th>Tier</th><th>Days left</th><th>Expires at</th></tr></thead>
+      <tbody>${expiringRows}</tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Top posts -->
+<div class="section">
+  <div class="section-label">Top posts — 30d unique views</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Slug</th><th>Title</th><th>Tier</th><th class="num">30d uniques</th><th>Status</th></tr></thead>
+      <tbody>${topRows}</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">
+  <span>mdpage internal dashboard</span>
+  <span>Auto-refresh every 5 min · <a href="/healthz" target="_blank">/healthz</a></span>
+</div>
+
+</div><!-- /container -->
+
+<meta http-equiv="refresh" content="300;url=/internal"/>
+
+</body>
+</html>`);
   } catch (err) {
     log.error('internal.dashboard.error', { error: err.message });
-    return res.status(500).send('<h1>500 — Internal dashboard error</h1>');
+    return res.status(500).type('html').send(`<!doctype html><html><head><meta charset="utf-8"/><title>mdpage — error</title>
+<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}</style>
+</head><body><div><h1 style="font-size:48px;margin-bottom:8px">500</h1><p style="color:#94a3b8">Internal dashboard error — check server logs.</p><p style="margin-top:16px"><a href="/internal" style="color:#818cf8">↩ Retry</a></p></div></body></html>`);
   }
 });
 

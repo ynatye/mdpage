@@ -50,7 +50,7 @@ Validate key values match your intended `.env`:
 ## 4) Data index sanity
 
 ```bash
-python3 -c "import json; d=json.load(open('data/articles/index.json')); print(f'articles={len(d)}')"
+python3 -c "import json; d=json.load(open('data/index.json')); print(f'articles={len(d)}')"
 ```
 
 Expected: non-negative count and no JSON parse error.

@@ -6,9 +6,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — feat/overnight-buildout
+## [Unreleased] — feat/phase2-day2-auth-dashboard
 
-### Added
+### Added (Day 2 — auth hardening + dashboard polish)
+
+- `lib/internal-auth.js` — new auth module:
+  - `constantTimeEqual()` — timing-safe token comparison (no oracle attacks)
+  - `createSession()` / `verifySession()` — HMAC-SHA256 signed session cookies (8h TTL)
+  - `parseCookies()`, `buildSetCookieHeader()`, `buildClearCookieHeader()` — cookie helpers
+  - `apiInternalAuth()` — JSON 401 middleware for `/api/internal/*` routes
+  - `dashboardAuth()` — HTML login form middleware for `GET /internal`
+  - `buildLoginPage()` — styled login form that POSTs (no token in URL)
+- `POST /internal/auth` — login endpoint; validates token from POST body, issues session cookie, redirects to clean `/internal`
+- `GET /internal/logout` — clears session cookie, redirects to login
+- `POST /internal/actions/lifecycle-run` — dashboard-triggered lifecycle sweep (auth'd via cookie)
+- `/internal` dashboard — fully redesigned:
+  - Dark theme, proper semantic HTML5 with complete CSS
+  - Color-coded stat cards (green/yellow/red by status)
+  - Lifecycle transitions bar with 24h counters
+  - "Run lifecycle sweep" button (POST form, no JS required)
+  - Expiring-soon table with clickable article links and day-count color coding
+  - Top posts table with tier and status badges
+  - Sign-out link; open-dashboard warning banner when `INTERNAL_DASHBOARD_TOKEN` is unset
+  - Auto-refresh every 5 minutes (`<meta http-equiv="refresh">`)
+  - 500 error page with retry link
+- All `/api/internal/*` routes now protected by `apiInternalAuth()` middleware
+- Unit tests: `tests/unit/internal-auth.test.js` — 45 tests across IA-01..IA-10
+
+### Fixed
+- `GET /internal` previously compared token without constant-time safety; now uses `constantTimeEqual()`
+- `?token=` in URL: now immediately redirected to clean URL after setting session cookie — token no longer persists in server logs or browser history
+- Removed `render`, `generateSlug`, `evaluateArticle` unused imports from `server.js`
+
+### Added (Day 1 — from previous commit)
 - `GET /api/internal/stats` — health summary endpoint (total/published/at_risk/expired/free/paid)
 - `GET /healthz` — liveness probe for Docker healthchecks and load balancers
 - `Dockerfile` — multi-stage build (builder → slim runtime), non-root user, HEALTHCHECK directive

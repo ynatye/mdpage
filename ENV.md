@@ -24,6 +24,7 @@ Configuration sources (highest precedence first):
 | `RATE_VIEW_MAX` | `60` | View endpoint limiter | `60-300` |
 | `RATE_VIEW_WIN` | `60` | View limiter window (seconds) | `60` |
 | `LOG_LEVEL` | `info` (prod), `debug` (dev) | Structured logging filter | `info` |
+| `INTERNAL_DASHBOARD_TOKEN` | unset (open) | Protect /internal dashboard + API | `$(openssl rand -hex 32)` |
 | `SERVER_URL` | unset | Integration test target URL | `https://api.example.com` |
 | `INTEGRATION_SERVER_WAIT_MS` | `12000` | Integration local-runner startup timeout | `15000` |
 | `INTEGRATION_SERVER_POLL_MS` | `200` | Integration local-runner poll interval | `200-500` |
@@ -148,6 +149,37 @@ Sets the minimum log severity emitted to stdout (JSON lines).
 
 ---
 
+## Internal Dashboard
+
+### `INTERNAL_DASHBOARD_TOKEN`
+
+- Default: unset (dashboard is open — dev/local only)
+- Type: string (arbitrary secret; use `openssl rand -hex 32` for production)
+- Example: `INTERNAL_DASHBOARD_TOKEN=super-secret-token`
+
+When set, protects `GET /internal` and all `/api/internal/*` endpoints.
+
+**Auth flow (browser):**
+1. Browser visits `/internal` → login form is shown (no token in URL ever)
+2. User POSTs to `/internal/auth` with the token in the request body
+3. Server validates, issues a signed HttpOnly session cookie (8h TTL), redirects to `/internal`
+4. Subsequent requests use the cookie automatically
+
+**Auth flow (programmatic):**
+- Pass `x-internal-token: <token>` header for API access (curl / scripts)
+
+**Legacy query param:**
+- `GET /internal?token=<value>` still works (backward compat) but redirects immediately to strip the token from the URL so it never persists in server logs or browser history
+
+**Cookie security:**
+- `HttpOnly; SameSite=Strict; Path=/`
+- `Secure` flag added automatically when `NODE_ENV=production`
+- Cookie name uses `__Host-` prefix in production for added browser security
+
+⚠️ Leaving this unset in production exposes lifecycle controls and article metadata to anyone who can reach the server. Always set this in production.
+
+---
+
 ## Integration Test Runner
 
 These variables tune `npm run test:integration` and are optional.
@@ -217,6 +249,9 @@ RATE_VIEW_WIN=60
 
 # Logging
 LOG_LEVEL=info
+
+# Internal dashboard (generate: openssl rand -hex 32)
+INTERNAL_DASHBOARD_TOKEN=
 ```
 
 Never commit your real `.env` file.

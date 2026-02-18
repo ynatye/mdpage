@@ -9,22 +9,37 @@
  */
 import React, { useMemo } from 'react'
 
-function computeDaysRemaining(expiresAt) {
+function parseExpiry(expiresAt) {
   if (!expiresAt) return null
   try {
     const expiry = new Date(expiresAt)
-    if (isNaN(expiry.getTime())) return null
-    const now = new Date()
-    const diffMs = expiry.getTime() - now.getTime()
-    if (diffMs <= 0) return 0
-    return Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+    return isNaN(expiry.getTime()) ? null : expiry
   } catch {
     return null
   }
 }
 
+function computeDaysRemaining(expiry) {
+  if (!expiry) return null
+  const now = new Date()
+  const diffMs = expiry.getTime() - now.getTime()
+  if (diffMs <= 0) return 0
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+}
+
+function formatExpiryDate(expiry) {
+  if (!expiry) return null
+  return expiry.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 export default function AtRiskBanner({ expiresAt, upgradeHref = '/' }) {
-  const daysLeft = useMemo(() => computeDaysRemaining(expiresAt), [expiresAt])
+  const expiry = useMemo(() => parseExpiry(expiresAt), [expiresAt])
+  const daysLeft = useMemo(() => computeDaysRemaining(expiry), [expiry])
+  const expiryDateText = useMemo(() => formatExpiryDate(expiry), [expiry])
 
   const countdownText =
     daysLeft === null
@@ -55,6 +70,7 @@ export default function AtRiskBanner({ expiresAt, upgradeHref = '/' }) {
         </a>
       </div>
       <p className="mt-1.5 text-amber-700/70 dark:text-amber-400/60 text-xs">
+        {expiryDateText ? `Scheduled expiry date: ${expiryDateText}. ` : ''}
         Paid posts are ad-free, get a clean slug, and are kept permanently.
       </p>
     </div>

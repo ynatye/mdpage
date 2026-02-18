@@ -120,6 +120,15 @@ Full request/response details: [API.md](./API.md)
 
 ---
 
+## UX notes (frontend/backend contract)
+
+- **Free tier slug field is read-only in UI** and derived from title; backend appends random suffix on publish.
+- **Paid tier slug field is editable**; backend enforces clean slug collisions with `409`.
+- Article page sends one **fire-and-forget** view event per slug render path using `X-Visitor-Id` when available.
+- `meta.status === "at_risk"` shows warning banner; `410` responses render an expired-state page.
+
+---
+
 ## Docs map
 
 - [ENV.md](./ENV.md) — environment variable reference

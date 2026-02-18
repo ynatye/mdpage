@@ -30,7 +30,8 @@ curl -s http://localhost:3456/api/internal/config | python3 -m json.tool
 
 ```bash
 npm run test:backend
-npm run test:integration   # requires backend running on 3456
+npm run test:integration   # starts isolated local server on 3457 automatically
+SERVER_URL=https://your-live-api npm run test:integration   # run against live API
 npm run test:phase1
 npm run test:all
 ```
@@ -41,7 +42,7 @@ npm run test:all
 # stop running dev processes, then:
 rm -rf data/articles/* data/views/*
 mkdir -p data/articles data/views
-printf '{}' > data/articles/index.json
+printf '{}' > data/index.json
 ```
 
 > Do not run this on production data.
@@ -107,9 +108,9 @@ docker compose restart mdpage
 ### Data model reminder
 
 All persistent state is in `./data`:
-- `data/articles/index.json`
-- `data/articles/<slug>/{article.json,content.md}`
-- `data/views/<slug>/<YYYY-MM-DD>.json`
+- `data/index.json`
+- `data/articles/<slug>.md`
+- `data/views/<slug>.json`
 
 ### Backup
 
@@ -131,7 +132,7 @@ docker compose start mdpage
 
 ```bash
 tar -tzf mdpage-data-YYYYMMDD-HHMMSS.tar.gz | head
-tar -tzf mdpage-data-YYYYMMDD-HHMMSS.tar.gz | grep 'data/articles/index.json'
+tar -tzf mdpage-data-YYYYMMDD-HHMMSS.tar.gz | grep 'data/index.json'
 ```
 
 ---
@@ -203,7 +204,7 @@ curl -s http://localhost:3456/healthz
 curl -s http://localhost:3456/api/internal/config | python3 -m json.tool
 
 # 4) quick article count
-python3 -c "import json; d=json.load(open('data/articles/index.json')); print(len(d))"
+python3 -c "import json; d=json.load(open('data/index.json')); print(len(d))"
 
 # 5) recent lifecycle logs
 docker compose logs --tail=200 mdpage | grep 'lifecycle' | tail -5
@@ -211,8 +212,8 @@ docker compose logs --tail=200 mdpage | grep 'lifecycle' | tail -5
 # 6) backend checks
 npm run test:backend
 
-# 7) publish smoke
-node scripts/validate-publish.js
+# 7) API smoke checks
+node scripts/health-check.js
 ```
 
 If any step fails, address incident section above before continuing operations.

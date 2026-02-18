@@ -24,6 +24,12 @@ Configuration sources (highest precedence first):
 | `RATE_VIEW_MAX` | `60` | View endpoint limiter | `60-300` |
 | `RATE_VIEW_WIN` | `60` | View limiter window (seconds) | `60` |
 | `LOG_LEVEL` | `info` (prod), `debug` (dev) | Structured logging filter | `info` |
+| `SERVER_URL` | unset | Integration test target URL | `https://api.example.com` |
+| `INTEGRATION_SERVER_WAIT_MS` | `12000` | Integration local-runner startup timeout | `15000` |
+| `INTEGRATION_SERVER_POLL_MS` | `200` | Integration local-runner poll interval | `200-500` |
+| `INTEGRATION_API_TIMEOUT_MS` | `6000` | Per-request timeout for integration fetch | `6000-10000` |
+| `INTEGRATION_API_MAX_RETRIES` | `2` | Retries for transient network/5xx during integration | `2-3` |
+| `INTEGRATION_API_RETRY_DELAY_MS` | `250` | Base retry backoff (ms) for integration fetch | `250-500` |
 
 ---
 
@@ -139,6 +145,54 @@ Window size for view throttling.
 - Example: `LOG_LEVEL=warn`
 
 Sets the minimum log severity emitted to stdout (JSON lines).
+
+---
+
+## Integration Test Runner
+
+These variables tune `npm run test:integration` and are optional.
+
+### `SERVER_URL`
+
+- Default: unset
+- Example: `SERVER_URL=https://api.example.com`
+
+When set, integration tests run against that live API URL and do **not** spawn a local backend process.
+
+### `INTEGRATION_SERVER_WAIT_MS`
+
+- Default: `12000`
+- Type: integer (milliseconds)
+
+Maximum time the local integration runner waits for server readiness.
+
+### `INTEGRATION_SERVER_POLL_MS`
+
+- Default: `200`
+- Type: integer (milliseconds)
+
+Polling interval for local server readiness checks.
+
+### `INTEGRATION_API_TIMEOUT_MS`
+
+- Default: `6000`
+- Type: integer (milliseconds)
+
+Per-request timeout used by integration fetch helper.
+
+### `INTEGRATION_API_MAX_RETRIES`
+
+- Default: `2`
+- Type: integer
+
+Retries for transient network errors and 5xx responses during integration tests.
+
+### `INTEGRATION_API_RETRY_DELAY_MS`
+
+- Default: `250`
+- Type: integer (milliseconds)
+
+Linear backoff base between integration retry attempts.
 
 ---
 

@@ -507,13 +507,14 @@ app.get('/api/internal/config', (_req, res) => {
  */
 app.get('/api/internal/stats', async (_req, res) => {
   try {
-    const indexPath = './data/articles/index.json';
+    const indexPath = './data/index.json';
     let index = {};
     try {
       const raw = await fs.readFile(indexPath, 'utf8');
       index = JSON.parse(raw);
-    } catch {
+    } catch (readErr) {
       // No articles yet — return zeroed stats
+      log.warn('stats.index.read.empty', { reason: readErr.message });
     }
 
     const entries = Object.values(index);

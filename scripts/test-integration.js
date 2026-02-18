@@ -7,7 +7,12 @@
  *
  * Usage:
  *   node scripts/test-integration.js
- *   PORT=3457 node scripts/test-integration.js   # custom port
+ *   PORT=3457 node scripts/test-integration.js   # custom local port
+ *   SERVER_URL=https://api.example.com node scripts/test-integration.js  # live API mode
+ *
+ * Tunables:
+ *   INTEGRATION_SERVER_WAIT_MS=15000
+ *   INTEGRATION_SERVER_POLL_MS=250
  *
  * Called by: npm run test:integration  (and npm run test:all)
  */
@@ -18,10 +23,12 @@ import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.join(__dirname, '..');
-const PORT      = process.env.PORT ?? '3457';  // use 3457 to avoid conflict with dev server
-const SERVER_URL = `http://localhost:${PORT}`;
-const MAX_WAIT_MS = 12_000;   // max time to wait for server startup
-const POLL_MS     = 200;
+const PORT       = process.env.PORT ?? '3457';  // use 3457 to avoid conflict with dev server
+const LIVE_URL    = process.env.SERVER_URL;
+const SERVER_URL  = LIVE_URL ?? `http://localhost:${PORT}`;
+const RUN_LIVE    = Boolean(LIVE_URL);
+const MAX_WAIT_MS = Number(process.env.INTEGRATION_SERVER_WAIT_MS ?? 12_000);
+const POLL_MS     = Number(process.env.INTEGRATION_SERVER_POLL_MS ?? 200);
 
 let serverProc = null;
 
@@ -65,10 +72,10 @@ async function waitForServer(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${url}/api/articles/__ping__`, {
+      const res = await fetch(`${url}/healthz`, {
         signal: AbortSignal.timeout(1_000),
       });
-      if (res.status !== 0) {
+      if (res.ok) {
         console.log(`[integration] Server ready at ${url}`);
         return true;
       }
@@ -84,12 +91,16 @@ async function waitForServer(url, timeoutMs) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 (async () => {
-  startServer();
+  if (RUN_LIVE) {
+    console.log(`[integration] Using live API: ${SERVER_URL}`);
+  } else {
+    startServer();
 
-  const ready = await waitForServer(SERVER_URL, MAX_WAIT_MS);
-  if (!ready) {
-    cleanup();
-    process.exit(1);
+    const ready = await waitForServer(SERVER_URL, MAX_WAIT_MS);
+    if (!ready) {
+      cleanup();
+      process.exit(1);
+    }
   }
 
   let exitCode = 0;

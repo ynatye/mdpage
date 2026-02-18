@@ -8,6 +8,10 @@ import { strict as assert } from 'node:assert';
 
 export const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3456';
 
+const API_TIMEOUT_MS = Number(process.env.INTEGRATION_API_TIMEOUT_MS ?? 6_000);
+const MAX_RETRIES = Number(process.env.INTEGRATION_API_MAX_RETRIES ?? 2);
+const RETRY_DELAY_MS = Number(process.env.INTEGRATION_API_RETRY_DELAY_MS ?? 250);
+
 /**
  * Lightweight assert wrapper that tracks pass/fail counts.
  * Used in integration scripts where node:test is too heavy.
@@ -64,17 +68,49 @@ export class TestRunner {
  */
 export async function apiFetch(path, options = {}) {
   const url = `${SERVER_URL}${path}`;
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    body = null;
+
+  let lastErr = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        headers: { 'Content-Type': 'application/json', ...options.headers },
+        ...options,
+      });
+
+      let body;
+      try {
+        body = await res.json();
+      } catch {
+        body = null;
+      }
+
+      // Retry transient 5xx responses (useful for live API warmups)
+      if (res.status >= 500 && attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+
+      return { status: res.status, ok: res.ok, body };
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+    }
   }
-  return { status: res.status, ok: res.ok, body };
+
+  return {
+    status: 0,
+    ok: false,
+    body: {
+      error: 'NETWORK_ERROR',
+      message: lastErr?.message ?? 'request failed',
+      url,
+      retries: MAX_RETRIES,
+    },
+  };
 }
 
 /**
@@ -82,9 +118,8 @@ export async function apiFetch(path, options = {}) {
  */
 export async function serverIsReachable() {
   try {
-    const res = await fetch(`${SERVER_URL}/api/articles/__ping__`, { signal: AbortSignal.timeout(2000) });
-    // 404 is fine — means server is up but article not found
-    return res.status !== 0;
+    const res = await fetch(`${SERVER_URL}/healthz`, { signal: AbortSignal.timeout(Math.min(API_TIMEOUT_MS, 4_000)) });
+    return res.ok;
   } catch {
     return false;
   }

@@ -12,7 +12,10 @@
     "start": "node server.js",
     "test": "node scripts/validate-publish.js",
     "test:backend": "node scripts/test-backend.js",
-    "test:all": "node scripts/validate-publish.js && node scripts/test-backend.js"
+    "test:unit": "node --test tests/unit/slug-rules.test.js tests/unit/lifecycle.test.js tests/unit/view-dedup.test.js",
+    "test:phase1": "bash tests/run-qa.sh unit",
+    "test:integration": "bash tests/run-qa.sh integration",
+    "test:all": "node scripts/validate-publish.js && node scripts/test-backend.js && bash tests/run-qa.sh all"
   },
   "keywords": [
     "markdown",

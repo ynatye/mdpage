@@ -489,6 +489,53 @@ app.get('/api/internal/config', (_req, res) => {
 });
 
 /**
+ * GET /api/internal/stats
+ *
+ * Returns a high-level health summary across all articles.
+ * Useful for dashboards and monitoring scripts.
+ *
+ * Response:
+ *   {
+ *     total:     number,   // all articles in index
+ *     published: number,   // status = "published"
+ *     at_risk:   number,   // status = "at_risk"
+ *     expired:   number,   // status = "expired"
+ *     free:      number,   // tier = "free"
+ *     paid:      number,   // tier = "paid"
+ *     ts:        string,   // ISO timestamp of snapshot
+ *   }
+ */
+app.get('/api/internal/stats', async (_req, res) => {
+  try {
+    const indexPath = './data/articles/index.json';
+    let index = {};
+    try {
+      const raw = await fs.readFile(indexPath, 'utf8');
+      index = JSON.parse(raw);
+    } catch {
+      // No articles yet — return zeroed stats
+    }
+
+    const entries = Object.values(index);
+    const stats = {
+      total:     entries.length,
+      published: entries.filter(e => (e.status ?? 'published') === 'published').length,
+      at_risk:   entries.filter(e => e.status === 'at_risk').length,
+      expired:   entries.filter(e => e.status === 'expired').length,
+      free:      entries.filter(e => e.tier === 'free').length,
+      paid:      entries.filter(e => e.tier === 'paid').length,
+      ts:        new Date().toISOString(),
+    };
+
+    log.info('stats.requested', { total: stats.total });
+    return res.json(stats);
+  } catch (err) {
+    log.error('stats.error', { error: err.message });
+    return res.status(500).json({ error: 'Error computing stats' });
+  }
+});
+
+/**
  * GET /healthz
  *
  * Lightweight liveness probe for Docker / load balancers.

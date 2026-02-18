@@ -211,6 +211,27 @@ Manually trigger the full lifecycle sweep. In production this is called by a cro
 
 ---
 
+## GET /api/internal/stats
+
+Returns a health summary across all articles. Suitable for dashboards and
+monitoring scripts.
+
+### Response (200 OK)
+
+```json
+{
+  "total":     12,
+  "published": 9,
+  "at_risk":   2,
+  "expired":   1,
+  "free":      10,
+  "paid":      2,
+  "ts":        "2026-02-18T06:00:00.000Z"
+}
+```
+
+---
+
 ## GET /api/internal/config
 
 Returns current runtime configuration for debugging.

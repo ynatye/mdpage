@@ -111,14 +111,7 @@ app.post('/api/publish', async (req, res) => {
       }
     }
 
-    // Check for slug collision
     const index = await loadIndex();
-    if (index[slug]) {
-      return res.status(409).json({ 
-        error: 'An article with this URL already exists',
-        suggestion: 'Try using a different custom slug or modify the title'
-      });
-    }
 
     // Extract metadata
     const description = extractDescription(markdown);

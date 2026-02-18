@@ -119,7 +119,7 @@ export default function Upload() {
       if (response.ok) {
         const fullUrl = `${window.location.origin}${data.url}`
         setPublishedUrl(fullUrl)
-        toast.success('Article published!', {
+        toast.success(data.updated ? 'Article updated!' : 'Article published!', {
           action: {
             label: 'Copy URL',
             onClick: () => {

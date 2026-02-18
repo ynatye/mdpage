@@ -112,11 +112,13 @@ app.post('/api/publish', async (req, res) => {
     }
 
     const index = await loadIndex();
+    const isUpdate = !!index[slug];
 
     // Extract metadata
     const description = extractDescription(markdown);
     const readingTime = estimateReadingTime(markdown);
-    const createdAt = new Date().toISOString();
+    const createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
+    const updatedAt = isUpdate ? new Date().toISOString() : undefined;
 
     // Save markdown file
     const articlePath = path.join('./data/articles', `${slug}.md`);
@@ -127,6 +129,7 @@ app.post('/api/publish', async (req, res) => {
       slug,
       title,
       description,
+      ...(updatedAt && { updatedAt }),
       createdAt,
       readingTime
     };
@@ -136,7 +139,8 @@ app.post('/api/publish', async (req, res) => {
       success: true, 
       slug, 
       title,
-      url: `/${slug}` 
+      url: `/${slug}`,
+      updated: isUpdate
     });
 
   } catch (error) {

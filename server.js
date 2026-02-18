@@ -1,267 +1,487 @@
+/**
+ * server.js — mdpage Express server (Phase 1)
+ *
+ * API surface:
+ *   POST /api/publish                        — publish a new article
+ *   GET  /api/articles/:slug                 — read article + metadata
+ *   POST /api/articles/:slug/view            — record a view (deduped daily)
+ *   GET  /api/internal/lifecycle/:slug       — inspect lifecycle state (debug)
+ *   POST /api/internal/lifecycle/run         — trigger a lifecycle sweep (debug)
+ *   GET  /api/internal/config                — show current thresholds/limits
+ *
+ * Response shapes are documented inline; keep them stable for frontend consumers.
+ */
+
 import express from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { render, renderContent, extractTitle, generateSlug, extractDescription, estimateReadingTime } from './lib/markdown.js';
+
+import {
+  render,
+  renderContent,
+  extractTitle,
+  generateSlug,
+  extractDescription,
+  estimateReadingTime,
+} from './lib/markdown.js';
+import { normalizeSlugBase, resolveSlug } from './lib/slug.js';
+import { recordView, getUniqueViewCount, getViewData } from './lib/views.js';
+import { evaluateArticle, runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
+import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
+import log from './lib/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-const app = express();
-const PORT = 3456;
+const app  = express();
+const PORT = process.env.PORT ?? 3456;
 
-// Middleware
+// ── Middleware ────────────────────────────────────────────────────────────────
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// CORS middleware — only needed in development (proxied by Vite in dev, same origin in prod)
+// CORS: dev only (in production we're same-origin via static serving)
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    if (req.method === 'OPTIONS') {
-      res.sendStatus(200);
-      return;
-    }
+    if (req.method === 'OPTIONS') { res.sendStatus(200); return; }
     next();
   });
 }
 
-// Serve static files from dist
-const distPath = path.join(__dirname, 'dist');
-app.use(express.static(distPath));
+// Serve built frontend
+app.use(express.static(path.join(__dirname, 'dist')));
 
-// Ensure data directories exist
+// ── Data directory bootstrap ──────────────────────────────────────────────────
+
 async function ensureDataDirs() {
-  try {
-    await fs.access('./data');
-  } catch {
-    await fs.mkdir('./data', { recursive: true });
-  }
-  
-  try {
-    await fs.access('./data/articles');
-  } catch {
-    await fs.mkdir('./data/articles', { recursive: true });
-  }
-  
-  try {
-    await fs.access('./data/index.json');
-  } catch {
+  await fs.mkdir('./data',          { recursive: true });
+  await fs.mkdir('./data/articles', { recursive: true });
+  await fs.mkdir('./data/views',    { recursive: true });
+  try { await fs.access('./data/index.json'); } catch {
     await fs.writeFile('./data/index.json', '{}');
   }
 }
 
-// Load index metadata
+// ── Index helpers ─────────────────────────────────────────────────────────────
+
 async function loadIndex() {
   try {
-    const data = await fs.readFile('./data/index.json', 'utf8');
-    return JSON.parse(data);
-  } catch {
-    return {};
-  }
+    return JSON.parse(await fs.readFile('./data/index.json', 'utf8'));
+  } catch { return {}; }
 }
 
-// Save index metadata
 async function saveIndex(index) {
   await fs.writeFile('./data/index.json', JSON.stringify(index, null, 2));
 }
 
-// Simple async mutex — serialises concurrent index.json reads/writes so that
-// two simultaneous publish requests cannot interleave their load→mutate→save
-// sequences and silently drop each other's changes.
+// Serialised index read-modify-write mutex (prevents interleaving concurrent publishes)
 let _indexLock = Promise.resolve();
 async function withIndexLock(fn) {
   const prev = _indexLock;
   let release;
   _indexLock = new Promise((r) => { release = r; });
   await prev;
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
+  try { return await fn(); }
+  finally { release(); }
 }
 
-// API Routes
-// POST /api/publish - Publish article
-app.post('/api/publish', async (req, res) => {
-  try {
-    const { markdown, slug: customSlug } = req.body;
-    
-    // Validate input
-    if (!markdown || typeof markdown !== 'string' || markdown.trim().length === 0) {
-      return res.status(400).json({ error: 'Markdown content is required' });
-    }
+// ── Slug availability check ───────────────────────────────────────────────────
 
-    if (markdown.trim().length > 1024 * 1024) { // 1MB limit
-      return res.status(400).json({ error: 'Markdown content too large (max 1MB)' });
-    }
+async function isSlugAvailable(slug) {
+  const index = await loadIndex();
+  return !Object.prototype.hasOwnProperty.call(index, slug);
+}
 
-    // Extract and validate title
-    const title = extractTitle(markdown);
-    if (!title || title === 'Untitled' || title.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'Article must have a title (first line starting with "# ")' 
-      });
-    }
+// ── Routes ────────────────────────────────────────────────────────────────────
 
-    // Generate and validate slug
-    let slug;
-    if (customSlug && customSlug.trim()) {
-      slug = customSlug.trim().toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '');
-      
-      if (!slug || slug.length === 0) {
-        return res.status(400).json({ 
-          error: 'Invalid custom slug. Use only letters, numbers, and hyphens.' 
+/**
+ * POST /api/publish
+ *
+ * Request body:
+ * {
+ *   markdown:   string   — full markdown content (required)
+ *   tier:       string   — "free" | "paid" (default: "free")
+ *   slug:       string?  — custom slug base for paid tier; ignored for free
+ *   _hp:        string?  — honeypot field; must be empty/absent for real requests
+ * }
+ *
+ * Response (201 Created):
+ * {
+ *   success:    true
+ *   slug:       string
+ *   slugBase:   string
+ *   url:        string   — "/{slug}"
+ *   tier:       "free" | "paid"
+ *   adEnabled:  boolean
+ *   status:     "published"
+ *   createdAt:  ISO string
+ *   updatedAt:  ISO string | undefined
+ * }
+ */
+app.post(
+  '/api/publish',
+  publishRateLimit(),
+  honeypot(),
+  async (req, res) => {
+    try {
+      const { markdown, slug: customSlug, tier: rawTier = 'free' } = req.body;
+
+      // ── Input validation ────────────────────────────────────────────────
+      if (!markdown || typeof markdown !== 'string' || !markdown.trim()) {
+        return res.status(400).json({ error: 'Markdown content is required' });
+      }
+      if (markdown.trim().length > 1024 * 1024) {
+        return res.status(400).json({ error: 'Markdown content too large (max 1MB)' });
+      }
+
+      const tier = rawTier === 'paid' ? 'paid' : 'free';
+
+      const title = extractTitle(markdown);
+      if (!title || title === 'Untitled') {
+        return res.status(400).json({
+          error: 'Article must have a title (first line: "# Your Title")',
         });
       }
-    } else {
-      slug = generateSlug(title);
-      if (!slug || slug.length === 0) {
-        return res.status(400).json({ error: 'Could not generate valid slug from title' });
+
+      // ── Slug generation ──────────────────────────────────────────────────
+      // For paid: use custom slug or derive from title (no suffix)
+      // For free: always derive from title + random suffix (custom input ignored)
+      const rawBase = tier === 'paid' && customSlug?.trim()
+        ? customSlug.trim()
+        : title;
+
+      const slugBase = normalizeSlugBase(rawBase);
+      if (!slugBase) {
+        return res.status(400).json({ error: 'Could not derive a valid slug from the title' });
       }
-    }
 
-    // Pre-compute metadata outside the lock (no I/O, safe to do here)
-    const description = extractDescription(markdown);
-    const readingTime = estimateReadingTime(markdown);
+      let slug;
+      try {
+        slug = await resolveSlug(tier, slugBase, isSlugAvailable);
+      } catch (err) {
+        if (err.code === 'SLUG_CONFLICT') {
+          return res.status(409).json({
+            error: `Slug "${err.slug}" is already taken. Choose a different title or slug.`,
+          });
+        }
+        if (err.code === 'SLUG_EXHAUSTED') {
+          return res.status(500).json({ error: 'Could not generate a unique slug. Please retry.' });
+        }
+        throw err;
+      }
 
-    // Write the markdown file before acquiring the index lock.
-    // Two concurrent writes to the same slug will race at the OS level;
-    // the last writer wins, which is acceptable (same-slug = same article).
-    const articlePath = path.join('./data/articles', `${slug}.md`);
-    await fs.writeFile(articlePath, markdown, 'utf8');
+      // ── Pre-compute metadata ─────────────────────────────────────────────
+      const description  = extractDescription(markdown);
+      const readingTime  = estimateReadingTime(markdown);
+      const adEnabled    = tier === 'free';
 
-    // Serialise index load → mutate → save under a mutex so concurrent
-    // publishes for *different* slugs cannot clobber each other's entries.
-    let isUpdate;
-    await withIndexLock(async () => {
-      const index = await loadIndex();
-      isUpdate = !!index[slug];
+      // ── Write article file (outside lock) ────────────────────────────────
+      const articlePath = path.join('./data/articles', `${slug}.md`);
+      await fs.writeFile(articlePath, markdown, 'utf8');
 
-      const createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
-      const updatedAt = isUpdate ? new Date().toISOString() : undefined;
+      // ── Update index under mutex ─────────────────────────────────────────
+      let isUpdate;
+      let createdAt;
+      let updatedAt;
 
-      index[slug] = {
+      await withIndexLock(async () => {
+        const index = await loadIndex();
+        isUpdate  = !!index[slug];
+        createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
+        updatedAt = isUpdate ? new Date().toISOString() : undefined;
+
+        index[slug] = {
+          slug,
+          slugBase,
+          title,
+          tier,
+          adEnabled,
+          status: isUpdate ? (index[slug].status ?? 'published') : 'published',
+          createdAt,
+          ...(updatedAt && { updatedAt }),
+          description,
+          readingTime,
+          last30dUniqueViews: isUpdate ? (index[slug].last30dUniqueViews ?? 0) : 0,
+          totalViews: isUpdate ? (index[slug].totalViews ?? 0) : 0,
+          atRiskStartedAt: isUpdate ? (index[slug].atRiskStartedAt ?? null) : null,
+          expiresAt:       isUpdate ? (index[slug].expiresAt       ?? null) : null,
+        };
+
+        await saveIndex(index);
+      });
+
+      log.info('publish', {
         slug,
+        slugBase,
+        tier,
+        adEnabled,
+        isUpdate,
         title,
-        description,
-        ...(updatedAt && { updatedAt }),
+      });
+
+      return res.status(201).json({
+        success:   true,
+        slug,
+        slugBase,
+        url:       `/${slug}`,
+        tier,
+        adEnabled,
+        status:    'published',
         createdAt,
-        readingTime,
-      };
-      await saveIndex(index);
-    });
+        ...(updatedAt && { updatedAt }),
+      });
 
-    res.json({ 
-      success: true, 
-      slug, 
-      title,
-      url: `/${slug}`,
-      updated: isUpdate
-    });
+    } catch (err) {
+      log.error('publish.error', { error: err.message, stack: err.stack });
 
-  } catch (error) {
-    console.error('Publish error:', error);
-    
-    // More specific error messages
-    if (error.code === 'ENOSPC') {
-      return res.status(507).json({ 
-        error: 'Server storage full', 
-        details: 'The server has run out of disk space. Please try again later.' 
+      if (err.code === 'ENOSPC') return res.status(507).json({ error: 'Server storage full' });
+      if (err.code === 'EACCES') return res.status(500).json({ error: 'Server permission error' });
+
+      return res.status(500).json({
+        error: 'Failed to publish article',
+        ...(process.env.NODE_ENV !== 'production' && { debug: err.message }),
       });
     }
-    if (error.code === 'EACCES') {
-      return res.status(500).json({ 
-        error: 'Server permission error', 
-        details: 'The server does not have permission to write files.' 
-      });
-    }
-    if (error.code === 'EMFILE' || error.code === 'ENFILE') {
-      return res.status(500).json({ 
-        error: 'Too many open files', 
-        details: 'The server is handling too many requests. Please try again in a moment.' 
-      });
-    }
-    
-    // For development, include more error details
-    const errorDetails = process.env.NODE_ENV === 'production' ? undefined : {
-      message: error.message,
-      stack: error.stack
-    };
-    
-    res.status(500).json({ 
-      error: 'Failed to publish article',
-      details: 'An unexpected error occurred while publishing the article.',
-      debug: errorDetails
-    });
   }
-});
+);
 
-// GET /api/articles/:slug - Get article data
+/**
+ * GET /api/articles/:slug
+ *
+ * Response (200 OK):
+ * {
+ *   title:    string
+ *   content:  string   — rendered HTML (body only, H1 stripped)
+ *   meta: {
+ *     slug:               string
+ *     slugBase:           string
+ *     tier:               "free" | "paid"
+ *     adEnabled:          boolean
+ *     status:             "published" | "at_risk" | "expired"
+ *     description:        string
+ *     createdAt:          ISO string
+ *     updatedAt:          ISO string | undefined
+ *     readingTime:        string
+ *     last30dUniqueViews: number
+ *     expiresAt:          ISO string | null
+ *     atRiskStartedAt:    ISO string | null
+ *   }
+ * }
+ *
+ * Expired posts return 410 Gone.
+ */
 app.get('/api/articles/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
-    
-    // Validate slug format
-    if (!slug || !slug.match(/^[a-z0-9-]+$/)) {
+
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
       return res.status(404).json({ error: 'Article not found' });
     }
-    
-    // Load article metadata
-    const index = await loadIndex();
+
+    const index   = await loadIndex();
     const article = index[slug];
-    
+
     if (!article) {
       return res.status(404).json({ error: 'Article not found' });
     }
 
-    // Load article content
+    // Expired posts are no longer publicly served
+    if (article.status === 'expired') {
+      return res.status(410).json({
+        error: 'This article has expired and is no longer available.',
+        status: 'expired',
+        slug,
+      });
+    }
+
     const articlePath = path.join('./data/articles', `${slug}.md`);
     let markdown;
     try {
       markdown = await fs.readFile(articlePath, 'utf8');
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return res.status(404).json({ error: 'Article content not found' });
-      }
-      throw error;
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: 'Article content not found' });
+      throw err;
     }
-    
-    // Render content (strips first H1 to avoid duplication with header)
+
     const content = renderContent(markdown);
-    
-    res.json({
-      title: article.title,
+
+    return res.json({
+      title:   article.title,
       content,
       meta: {
-        slug: article.slug,
-        description: article.description,
-        createdAt: article.createdAt,
-        readingTime: article.readingTime
-      }
+        slug:               article.slug,
+        slugBase:           article.slugBase ?? article.slug,
+        tier:               article.tier        ?? 'free',
+        adEnabled:          article.adEnabled    ?? true,
+        status:             article.status       ?? 'published',
+        description:        article.description  ?? '',
+        createdAt:          article.createdAt,
+        updatedAt:          article.updatedAt,
+        readingTime:        article.readingTime  ?? '',
+        last30dUniqueViews: article.last30dUniqueViews ?? 0,
+        expiresAt:          article.expiresAt    ?? null,
+        atRiskStartedAt:    article.atRiskStartedAt ?? null,
+      },
     });
 
-  } catch (error) {
-    console.error('Article API error:', error);
-    res.status(500).json({ error: 'Error loading article' });
+  } catch (err) {
+    log.error('article.get.error', { error: err.message });
+    return res.status(500).json({ error: 'Error loading article' });
   }
 });
 
-// SPA fallback — serve the React app for all non-API routes
+/**
+ * POST /api/articles/:slug/view
+ *
+ * Records a view, deduplicating by fingerprint (IP + UA + date).
+ * Idempotent: subsequent calls on the same day from the same visitor are no-ops.
+ *
+ * Response (200 OK):
+ * {
+ *   recorded:    boolean   — true if this was a new unique view
+ *   date:        string    — YYYY-MM-DD of the bucket
+ * }
+ */
+app.post('/api/articles/:slug/view', viewRateLimit(), async (req, res) => {
+  try {
+    const { slug } = req.params;
+
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    // Verify article exists and is not expired
+    const index   = await loadIndex();
+    const article = index[slug];
+
+    if (!article) return res.status(404).json({ error: 'Article not found' });
+    if (article.status === 'expired') return res.status(410).json({ error: 'Article expired' });
+
+    const ip        = (req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
+                      || req.socket?.remoteAddress
+                      || 'unknown';
+    const userAgent = req.headers['user-agent'] ?? '';
+
+    const result = await recordView(slug, ip, userAgent);
+
+    // Bump totalViews counter in index (approximate, non-locked for performance)
+    if (result.recorded) {
+      withIndexLock(async () => {
+        const fresh = await loadIndex();
+        if (fresh[slug]) {
+          fresh[slug].totalViews = (fresh[slug].totalViews ?? 0) + 1;
+          await saveIndex(fresh);
+        }
+      }).catch((err) => log.error('view.totalViews.error', { error: err.message }));
+    }
+
+    return res.json({
+      recorded: result.recorded,
+      date:     result.date,
+    });
+
+  } catch (err) {
+    log.error('view.error', { error: err.message });
+    return res.status(500).json({ error: 'Error recording view' });
+  }
+});
+
+// ── Internal / admin endpoints ────────────────────────────────────────────────
+
+/**
+ * GET /api/internal/lifecycle/:slug
+ *
+ * Returns the current lifecycle state for a slug plus 30-day view count.
+ * Useful for debugging without triggering a full sweep.
+ *
+ * Response:
+ * {
+ *   slug:               string
+ *   status:             string
+ *   tier:               string
+ *   last30dUniqueViews: number
+ *   expiresAt:          ISO string | null
+ *   atRiskStartedAt:    ISO string | null
+ *   viewData:           object   — raw daily view buckets
+ * }
+ */
+app.get('/api/internal/lifecycle/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const index    = await loadIndex();
+    const article  = index[slug];
+
+    if (!article) return res.status(404).json({ error: 'Article not found' });
+
+    const views    = await getUniqueViewCount(slug, 30);
+    const viewData = await getViewData(slug);
+
+    return res.json({
+      slug,
+      status:             article.status            ?? 'published',
+      tier:               article.tier              ?? 'free',
+      createdAt:          article.createdAt,
+      last30dUniqueViews: views,
+      expiresAt:          article.expiresAt         ?? null,
+      atRiskStartedAt:    article.atRiskStartedAt   ?? null,
+      lifecycleConfig,
+      viewData,
+    });
+
+  } catch (err) {
+    log.error('lifecycle.inspect.error', { error: err.message });
+    return res.status(500).json({ error: 'Error inspecting lifecycle' });
+  }
+});
+
+/**
+ * POST /api/internal/lifecycle/run
+ *
+ * Manually trigger the lifecycle sweep over all free posts.
+ * In production this would be triggered by a cron job or scheduler.
+ *
+ * Response:
+ * {
+ *   evaluated:    number
+ *   transitions:  { at_risk, recovered, expired, no_change, skipped }
+ *   errors:       Array<{ slug, error }>
+ * }
+ */
+app.post('/api/internal/lifecycle/run', async (req, res) => {
+  try {
+    const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+    return res.json(summary);
+  } catch (err) {
+    log.error('lifecycle.run.error', { error: err.message });
+    return res.status(500).json({ error: 'Lifecycle sweep failed', details: err.message });
+  }
+});
+
+/**
+ * GET /api/internal/config
+ *
+ * Expose current runtime configuration for debugging.
+ */
+app.get('/api/internal/config', (_req, res) => {
+  return res.json({
+    lifecycle: lifecycleConfig,
+    rateLimit: rateLimitConfig,
+    env:       process.env.NODE_ENV ?? 'development',
+  });
+});
+
+// ── SPA fallback ──────────────────────────────────────────────────────────────
+
 app.use((req, res) => {
   res.sendFile('index.html', { root: path.join(__dirname, 'dist') }, (err) => {
     if (err) {
-      // dist/ not built yet or file missing — give a helpful message
       if (err.code === 'ENOENT') {
-        res.status(503).send(
-          '<h1>503 — App not built</h1><p>Run <code>npm run build</code> first.</p>'
-        );
+        res.status(503).send('<h1>503 — App not built</h1><p>Run <code>npm run build</code> first.</p>');
       } else {
         res.status(500).send('<h1>500 — Server error</h1>');
       }
@@ -269,15 +489,50 @@ app.use((req, res) => {
   });
 });
 
-// Start server
+// ── Lifecycle scheduler ───────────────────────────────────────────────────────
+
+const LIFECYCLE_INTERVAL_MS =
+  parseInt(process.env.LIFECYCLE_INTERVAL_MS ?? String(24 * 60 * 60 * 1000), 10);
+
+function scheduleLifecycleSweep() {
+  // Run once at startup (after a short delay to let the server warm up)
+  const startupDelay = process.env.NODE_ENV === 'test' ? 0 : 30_000;
+  setTimeout(async () => {
+    try {
+      await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+    } catch (err) {
+      log.error('lifecycle.startup.error', { error: err.message });
+    }
+  }, startupDelay);
+
+  // Then recur on the configured interval
+  const timer = setInterval(async () => {
+    try {
+      await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+    } catch (err) {
+      log.error('lifecycle.interval.error', { error: err.message });
+    }
+  }, LIFECYCLE_INTERVAL_MS);
+
+  timer.unref(); // Don't block process exit
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+
 async function start() {
   await ensureDataDirs();
+  scheduleLifecycleSweep();
+
   app.listen(PORT, () => {
-    console.log(`mdpage server running at http://localhost:${PORT}`);
+    log.info('server.start', { port: PORT, env: process.env.NODE_ENV ?? 'development' });
     if (process.env.NODE_ENV !== 'production') {
+      console.log(`mdpage server running at http://localhost:${PORT}`);
       console.log('Development: React app available at http://localhost:5173');
     }
   });
 }
 
-start().catch(console.error);
+start().catch((err) => {
+  log.error('server.fatal', { error: err.message, stack: err.stack });
+  process.exit(1);
+});

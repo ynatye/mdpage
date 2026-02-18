@@ -16,9 +16,62 @@ const md = new MarkdownIt({
   }
 });
 
+// Convert ASCII box tables (+---+---+) to proper markdown tables
+function convertAsciiTables(text) {
+  const lines = text.split('\n');
+  const result = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    if (/^\s*\+[-=+]+\+\s*$/.test(lines[i])) {
+      const tableLines = [];
+      let j = i;
+      while (j < lines.length && (/^\s*\+[-=+]+\+\s*$/.test(lines[j]) || /^\s*\|/.test(lines[j]))) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+
+      if (tableLines.length >= 3) {
+        const dataRows = tableLines.filter(l => /^\s*\|/.test(l));
+        
+        if (dataRows.length >= 1) {
+          const parsed = dataRows.map(row => {
+            return row.split('|')
+              .slice(1, -1)
+              .map(cell => cell.trim());
+          });
+
+          const colCount = parsed[0].length;
+          const mdRows = [];
+          mdRows.push('| ' + parsed[0].join(' | ') + ' |');
+          mdRows.push('| ' + parsed[0].map(() => '---').join(' | ') + ' |');
+          for (let k = 1; k < parsed.length; k++) {
+            const cells = parsed[k];
+            while (cells.length < colCount) cells.push('');
+            mdRows.push('| ' + cells.join(' | ') + ' |');
+          }
+
+          result.push(...mdRows);
+          i = j;
+          continue;
+        }
+      }
+    }
+
+    result.push(lines[i]);
+    i++;
+  }
+
+  return result.join('\n');
+}
+
+function preprocess(markdown) {
+  return convertAsciiTables(markdown);
+}
+
 // Export render function
 export function render(markdown) {
-  return md.render(markdown);
+  return md.render(preprocess(markdown));
 }
 
 // Extract title from first H1 heading

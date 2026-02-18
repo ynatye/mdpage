@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { render, extractTitle, generateSlug } from '@/lib/markdown'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import { toast } from 'sonner'
+import MdpageLogo from '@/components/MdpageLogo'
 
 export default function Upload() {
   const [markdown, setMarkdown] = useState('')
@@ -159,7 +160,7 @@ export default function Upload() {
     <div className="flex flex-col h-screen bg-background">
       {/* ── Top bar ── */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-        <div className="text-lg font-semibold text-foreground select-none">mdpage</div>
+        <MdpageLogo className="h-8 w-auto text-foreground select-none" />
 
         <div className="flex items-center gap-4 flex-1 max-w-md mx-4">
           <div className="flex items-center gap-2 flex-1 min-w-0">

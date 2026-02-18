@@ -284,3 +284,42 @@
     color-scheme: dark;
   }
 }
+
+/* ── Highlight.js dark mode overrides ─────────────────────────────────────── */
+/* github.css is imported for light mode; these rules shadow it under .dark    */
+.dark .hljs {
+  background: hsl(var(--muted)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: hsl(var(--muted-foreground));
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-section,
+.dark .hljs-link {
+  color: hsl(199 89% 65%); /* sky-blue tint */
+}
+.dark .hljs-string,
+.dark .hljs-title,
+.dark .hljs-name,
+.dark .hljs-type,
+.dark .hljs-attribute,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-addition {
+  color: hsl(145 60% 65%); /* soft green */
+}
+.dark .hljs-deletion,
+.dark .hljs-meta {
+  color: hsl(0 70% 65%); /* soft red */
+}
+.dark .hljs-number,
+.dark .hljs-regexp,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-tag .hljs-attr {
+  color: hsl(30 80% 65%); /* warm amber */
+}

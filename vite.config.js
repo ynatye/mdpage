@@ -22,5 +22,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+    // Large bundles are expected (recharts + highlight.js). Raise the limit to avoid noise.
+    chunkSizeWarningLimit: 2000,
   }
 })

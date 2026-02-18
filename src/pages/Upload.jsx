@@ -1,84 +1,78 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { render, extractTitle, generateSlug } from "@/lib/markdown"
-import { useChartHydration } from "@/hooks/useChartHydration.jsx"
-import { toast } from "sonner"
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { render, extractTitle, generateSlug } from '@/lib/markdown'
+import { useChartHydration } from '@/hooks/useChartHydration.jsx'
+import { toast } from 'sonner'
 
 export default function Upload() {
   const [markdown, setMarkdown] = useState('')
   const [slug, setSlug] = useState('')
+  const [slugManual, setSlugManual] = useState(false) // true once user edits the slug field
   const [renderedHTML, setRenderedHTML] = useState('')
   const [publishedUrl, setPublishedUrl] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  const [mobileView, setMobileView] = useState('editor') // 'editor' or 'preview'
+  const [mobileView, setMobileView] = useState('editor')
   const [isMobile, setIsMobile] = useState(false)
+
   const fileInputRef = useRef(null)
   const editorRef = useRef(null)
   const previewRef = useRef(null)
-
-  // Debounced preview rendering
   const debounceTimer = useRef(null)
-  
+
+  // ── Preview rendering (debounced) ──────────────────────────────────────────
   const updatePreview = useCallback((content) => {
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current)
-    }
+    clearTimeout(debounceTimer.current)
     debounceTimer.current = setTimeout(() => {
-      if (content.trim()) {
-        setRenderedHTML(render(content))
-      } else {
-        setRenderedHTML('')
-      }
+      setRenderedHTML(content.trim() ? render(content) : '')
     }, 150)
   }, [])
 
-  // Auto-generate slug from title
   useEffect(() => {
-    if (markdown) {
-      const title = extractTitle(markdown)
-      if (title && title !== 'Untitled' && !slug) {
-        setSlug(generateSlug(title))
-      }
-      updatePreview(markdown)
-    }
-  }, [markdown, slug, updatePreview])
+    updatePreview(markdown)
+  }, [markdown, updatePreview])
 
-  // Hydrate charts after preview renders
+  // ── Slug auto-generation from title (only when user hasn't overridden it) ──
+  useEffect(() => {
+    if (slugManual) return
+    if (!markdown) return
+    const title = extractTitle(markdown)
+    if (title && title !== 'Untitled') {
+      setSlug(generateSlug(title))
+    }
+  }, [markdown, slugManual])
+
+  // ── Chart hydration after preview renders ──────────────────────────────────
   useChartHydration(previewRef, [renderedHTML])
 
-  // Detect mobile screen size
+  // ── Mobile breakpoint detection ────────────────────────────────────────────
   useEffect(() => {
-    const checkIsMobile = () => {
-      setIsMobile(window.innerWidth < 768)
-    }
-    
-    checkIsMobile()
-    window.addEventListener('resize', checkIsMobile)
-    
-    return () => window.removeEventListener('resize', checkIsMobile)
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
   }, [])
 
-  const handleFileChange = (file) => {
-    if (file && (file.name.endsWith('.md') || file.name.endsWith('.markdown') || file.name.endsWith('.txt'))) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        setMarkdown(e.target.result)
-      }
-      reader.readAsText(file)
-    } else {
+  // ── File handling ──────────────────────────────────────────────────────────
+  const loadFile = (file) => {
+    if (!file) return
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['md', 'markdown', 'txt'].includes(ext)) {
       toast.error('Please select a .md, .markdown, or .txt file')
+      return
     }
+    const reader = new FileReader()
+    reader.onload = (e) => setMarkdown(e.target.result)
+    reader.onerror = () => toast.error('Failed to read file')
+    reader.readAsText(file)
   }
 
   const handleDrop = (e) => {
     e.preventDefault()
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) {
-      handleFileChange(files[0])
-    }
+    if (files.length > 0) loadFile(files[0])
   }
 
   const handleDragOver = (e) => {
@@ -88,15 +82,15 @@ export default function Upload() {
 
   const handleDragLeave = (e) => {
     e.preventDefault()
-    // Only set dragOver to false if we're leaving the editor area entirely
     if (!editorRef.current?.contains(e.relatedTarget)) {
       setDragOver(false)
     }
   }
 
+  // ── Publish ────────────────────────────────────────────────────────────────
   const handlePublish = async (e) => {
     e.preventDefault()
-    
+
     if (!markdown.trim()) {
       toast.error('Please enter some markdown content')
       return
@@ -113,13 +107,11 @@ export default function Upload() {
     try {
       const response = await fetch('/api/publish', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           markdown: markdown.trim(),
-          slug: slug.trim() || undefined
-        })
+          slug: slug.trim() || undefined,
+        }),
       })
 
       const data = await response.json()
@@ -127,42 +119,29 @@ export default function Upload() {
       if (response.ok) {
         const fullUrl = `${window.location.origin}${data.url}`
         setPublishedUrl(fullUrl)
-        toast.success('Article published successfully!', {
+        toast.success('Article published!', {
           action: {
             label: 'Copy URL',
             onClick: () => {
               navigator.clipboard.writeText(fullUrl)
-              toast.success('URL copied to clipboard!')
+              toast.success('URL copied!')
             },
           },
         })
       } else {
-        // Show detailed error message if available
-        let errorMessage = data.error || 'Failed to publish article';
-        if (data.details) {
-          errorMessage += ': ' + data.details;
-        }
-        if (data.suggestion) {
-          errorMessage += ' ' + data.suggestion;
-        }
-        toast.error(errorMessage);
-        console.error('Publish error details:', data);
+        let msg = data.error || 'Failed to publish article'
+        if (data.suggestion) msg += ' ' + data.suggestion
+        toast.error(msg)
       }
-    } catch (error) {
-      console.error('Publish error:', error);
-      
-      // Provide specific error messages based on the error type
-      let errorMessage = 'Failed to publish article';
-      
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        errorMessage = 'Network error: Unable to connect to the server. Please check your internet connection.';
-      } else if (error.name === 'AbortError') {
-        errorMessage = 'Request timed out. Please try again.';
-      } else if (error.message) {
-        errorMessage = 'Error: ' + error.message;
-      }
-      
-      toast.error(errorMessage);
+    } catch (err) {
+      console.error('Publish error:', err)
+      const msg =
+        err.name === 'TypeError' && err.message.includes('fetch')
+          ? 'Network error: unable to connect to server'
+          : err.name === 'AbortError'
+          ? 'Request timed out — please try again'
+          : 'Failed to publish article'
+      toast.error(msg)
     } finally {
       setIsPublishing(false)
     }
@@ -170,97 +149,84 @@ export default function Upload() {
 
   const copyUrl = () => {
     navigator.clipboard.writeText(publishedUrl)
-    toast.success('URL copied to clipboard!')
+    toast.success('URL copied!')
   }
 
-  const openArticle = () => {
-    window.open(publishedUrl, '_blank')
-  }
+  const openArticle = () => window.open(publishedUrl, '_blank')
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Top Bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="text-lg font-semibold text-foreground">
-          mdpage
-        </div>
-        
+      {/* ── Top bar ── */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
+        <div className="text-lg font-semibold text-foreground select-none">mdpage</div>
+
         <div className="flex items-center gap-4 flex-1 max-w-md mx-4">
-          <div className="flex items-center gap-2 flex-1">
-            <span className="text-sm text-muted-foreground">mdpage.com/</span>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="text-sm text-muted-foreground shrink-0">mdpage.com/</span>
             <Input
               type="text"
               value={slug}
-              onChange={(e) => setSlug(e.target.value)}
+              onChange={(e) => {
+                setSlug(e.target.value)
+                setSlugManual(true)
+              }}
               placeholder="article-slug"
-              className="border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
+              className="border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-sm min-w-0"
             />
           </div>
-          
+
           {publishedUrl && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyUrl}
-                className="h-7 px-2 text-xs"
-              >
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="ghost" size="sm" onClick={copyUrl} className="h-7 px-2 text-xs">
                 Copy
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={openArticle}
-                className="h-7 px-2 text-xs"
-              >
+              <Button variant="ghost" size="sm" onClick={openArticle} className="h-7 px-2 text-xs">
                 Open
               </Button>
             </div>
           )}
         </div>
 
-        <Button 
+        <Button
           onClick={handlePublish}
           disabled={isPublishing || !markdown.trim()}
           className="shrink-0"
         >
-          {isPublishing ? 'Publishing...' : 'Publish'}
+          {isPublishing ? 'Publishing…' : 'Publish'}
         </Button>
       </div>
 
-      {/* Mobile Toggle Tabs */}
+      {/* ── Mobile tabs ── */}
       {isMobile && (
         <div className="flex border-b border-border">
-          <button
-            onClick={() => setMobileView('editor')}
-            className={`flex-1 py-3 px-4 text-sm font-medium ${
-              mobileView === 'editor'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Editor
-          </button>
-          <button
-            onClick={() => setMobileView('preview')}
-            className={`flex-1 py-3 px-4 text-sm font-medium ${
-              mobileView === 'preview'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Preview
-          </button>
+          {['editor', 'preview'].map((view) => (
+            <button
+              key={view}
+              onClick={() => setMobileView(view)}
+              className={`flex-1 py-3 px-4 text-sm font-medium capitalize ${
+                mobileView === view
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {view}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Main Editor Area */}
-      <div className={`flex-1 flex overflow-hidden ${isMobile ? 'flex-col' : ''}`}>
-        {/* Editor Panel */}
-        <div className={`${isMobile ? (mobileView === 'editor' ? 'flex' : 'hidden') : 'flex'} flex-1 flex-col min-w-0 relative`}>
+      {/* ── Editor + Preview ── */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Editor panel */}
+        <div
+          className={`${
+            isMobile ? (mobileView === 'editor' ? 'flex' : 'hidden') : 'flex'
+          } flex-1 flex-col min-w-0`}
+        >
           <div
             ref={editorRef}
-            className={`flex-1 relative ${dragOver ? 'bg-blue-50 dark:bg-blue-950/20' : ''}`}
+            className="flex-1 relative"
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -268,48 +234,58 @@ export default function Upload() {
             <textarea
               value={markdown}
               onChange={(e) => setMarkdown(e.target.value)}
-              placeholder="# Your Article Title
-
-Start writing your markdown here...
-
-You can also drag and drop a .md file onto this editor."
-              className="w-full h-full resize-none border-0 bg-transparent p-6 text-sm font-mono leading-relaxed focus-visible:outline-none focus-visible:ring-0"
+              placeholder={`# Your Article Title\n\nStart writing your markdown here…\n\nDrag and drop a .md file, or click the area below to upload.`}
+              className={`w-full h-full resize-none border-0 bg-transparent p-6 text-sm font-mono leading-relaxed focus-visible:outline-none focus-visible:ring-0 transition-colors ${
+                dragOver ? 'opacity-30' : ''
+              }`}
               style={{ fontFamily: 'Geist Mono, monospace' }}
             />
-            
-            {/* Drag Overlay */}
+
+            {/* Drag overlay */}
             {dragOver && (
-              <div className="absolute inset-0 flex items-center justify-center bg-blue-50/90 dark:bg-blue-950/90 backdrop-blur-sm">
-                <div className="text-center">
+              <div className="absolute inset-0 flex items-center justify-center bg-background/90">
+                <div className="text-center pointer-events-none">
                   <div className="text-4xl mb-2">📄</div>
-                  <div className="text-lg font-medium text-blue-700 dark:text-blue-300">
-                    Drop .md file here
-                  </div>
+                  <div className="text-lg font-medium text-primary">Drop .md file here</div>
                 </div>
               </div>
+            )}
+
+            {/* Click-to-upload strip (bottom of editor) */}
+            {!markdown && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute bottom-0 inset-x-0 py-3 text-xs text-muted-foreground hover:text-primary border-t border-dashed border-border hover:border-primary transition-colors bg-background text-center"
+              >
+                or click here to upload a file
+              </button>
             )}
           </div>
         </div>
 
-        {/* Divider - only show on desktop */}
-        {!isMobile && <div className="w-px bg-border flex-shrink-0"></div>}
+        {/* Divider (desktop only) */}
+        {!isMobile && <div className="w-px bg-border flex-shrink-0" />}
 
-        {/* Preview Panel */}
-        <div className={`${isMobile ? (mobileView === 'preview' ? 'flex' : 'hidden') : 'flex'} flex-1 flex-col min-w-0 bg-background`}>
+        {/* Preview panel */}
+        <div
+          className={`${
+            isMobile ? (mobileView === 'preview' ? 'flex' : 'hidden') : 'flex'
+          } flex-1 flex-col min-w-0 bg-background`}
+        >
           <div className="flex-1 overflow-auto">
             {renderedHTML ? (
               <div className="p-6">
-                <div 
+                <div
                   ref={previewRef}
                   className="article-prose"
                   dangerouslySetInnerHTML={{ __html: renderedHTML }}
                 />
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="flex items-center justify-center h-full text-muted-foreground select-none">
                 <div className="text-center">
                   <div className="text-4xl mb-4">👁️</div>
-                  <div>Preview will appear here</div>
+                  <div className="text-sm">Preview will appear here</div>
                 </div>
               </div>
             )}
@@ -323,7 +299,7 @@ You can also drag and drop a .md file onto this editor."
         type="file"
         accept=".md,.markdown,.txt"
         className="hidden"
-        onChange={(e) => handleFileChange(e.target.files[0])}
+        onChange={(e) => loadFile(e.target.files[0])}
       />
     </div>
   )

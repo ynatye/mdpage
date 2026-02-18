@@ -14,20 +14,19 @@ const PORT = 3456;
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// CORS middleware for development
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-    return;
-  }
-  
-  next();
-});
+// CORS middleware — only needed in development (proxied by Vite in dev, same origin in prod)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(200);
+      return;
+    }
+    next();
+  });
+}
 
 // Serve static files from dist
 const distPath = path.join(__dirname, 'dist');
@@ -234,9 +233,20 @@ app.get('/api/articles/:slug', async (req, res) => {
   }
 });
 
-// SPA fallback - serve React app for all non-API routes
+// SPA fallback — serve the React app for all non-API routes
 app.use((req, res) => {
-  res.sendFile('index.html', { root: path.join(__dirname, 'dist') });
+  res.sendFile('index.html', { root: path.join(__dirname, 'dist') }, (err) => {
+    if (err) {
+      // dist/ not built yet or file missing — give a helpful message
+      if (err.code === 'ENOENT') {
+        res.status(503).send(
+          '<h1>503 — App not built</h1><p>Run <code>npm run build</code> first.</p>'
+        );
+      } else {
+        res.status(500).send('<h1>500 — Server error</h1>');
+      }
+    }
+  });
 });
 
 // Start server

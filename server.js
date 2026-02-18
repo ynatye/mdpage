@@ -76,7 +76,11 @@ async function loadIndex() {
 }
 
 async function saveIndex(index) {
-  await fs.writeFile('./data/index.json', JSON.stringify(index, null, 2));
+  // Atomic write: write to a temp file then rename so concurrent readers
+  // never observe a partial JSON file (which would cause loadIndex to return {}).
+  const tmp = './data/index.json.tmp';
+  await fs.writeFile(tmp, JSON.stringify(index, null, 2));
+  await fs.rename(tmp, './data/index.json');
 }
 
 // Serialised index read-modify-write mutex (prevents interleaving concurrent publishes)
@@ -338,8 +342,12 @@ app.get('/api/articles/:slug', async (req, res) => {
 /**
  * POST /api/articles/:slug/view
  *
- * Records a view, deduplicating by fingerprint (IP + UA + date).
+ * Records a view, deduplicating by fingerprint (visitorId|date or IP|UA|date).
  * Idempotent: subsequent calls on the same day from the same visitor are no-ops.
+ *
+ * Visitor identity resolution (first match wins):
+ *   1. X-Visitor-Id header  — client-supplied stable UUID (preferred)
+ *   2. IP + User-Agent      — fallback server-side fingerprint
  *
  * Response (200 OK):
  * {
@@ -362,12 +370,17 @@ app.post('/api/articles/:slug/view', viewRateLimit(), async (req, res) => {
     if (!article) return res.status(404).json({ error: 'Article not found' });
     if (article.status === 'expired') return res.status(410).json({ error: 'Article expired' });
 
+    // Visitor identity: prefer explicit X-Visitor-Id (client-side stable UUID,
+    // e.g. from localStorage) when present; fall back to IP + UA fingerprint.
+    const visitorId = req.headers['x-visitor-id']?.trim() ?? '';
     const ip        = (req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
                       || req.socket?.remoteAddress
                       || 'unknown';
     const userAgent = req.headers['user-agent'] ?? '';
+    // Use visitorId as the identity string when provided; otherwise derive from IP+UA.
+    const identity  = visitorId || `${ip}|${userAgent}`;
 
-    const result = await recordView(slug, ip, userAgent);
+    const result = await recordView(slug, identity, '');
 
     // Bump totalViews counter in index (approximate, non-locked for performance)
     if (result.recorded) {

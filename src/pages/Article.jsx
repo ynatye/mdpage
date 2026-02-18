@@ -1,8 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import AdSlot from '@/components/AdSlot'
 import AtRiskBanner from '@/components/AtRiskBanner'
+
+// ── Visitor identity ────────────────────────────────────────────────────────
+// We store a stable UUID in localStorage so the server can deduplicate views
+// from the same browser across sessions without relying on IP alone.
+function getOrCreateVisitorId() {
+  const KEY = 'mdpage_visitor_id'
+  try {
+    let id = localStorage.getItem(KEY)
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem(KEY, id)
+    }
+    return id
+  } catch {
+    // Private browsing or storage blocked — fall back to session-scoped id.
+    return crypto.randomUUID()
+  }
+}
 
 // Helper: upsert a <meta> tag by attribute/value pair.
 function setMetaTag(attribute, value, content) {
@@ -171,6 +189,19 @@ export default function Article() {
         setMetaTag('name', 'twitter:card', 'summary_large_image')
         setMetaTag('name', 'twitter:title', data.title)
         setMetaTag('name', 'twitter:description', data.meta.description)
+
+        // ── View tracking ─────────────────────────────────────────────────
+        // Fire-and-forget: don't let a tracking failure affect article render.
+        // Only track non-expired articles (expired returns early above).
+        try {
+          const visitorId = getOrCreateVisitorId()
+          await fetch(`/api/articles/${slug}/view`, {
+            method: 'POST',
+            headers: { 'X-Visitor-Id': visitorId },
+          })
+        } catch {
+          // Silently swallow tracking errors — never break the reader experience.
+        }
       } catch (err) {
         if (cancelled) return
         console.error('Error fetching article:', err)

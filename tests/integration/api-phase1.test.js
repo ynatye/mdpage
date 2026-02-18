@@ -234,8 +234,8 @@ if (freeSlug) {
       headers: { 'X-Visitor-Id': 'qa-test-visitor-unique-001' },
     });
     t.ok(res.ok, '[API-07] POST /view → 200', { status: res.status, body: res.body });
-    t.ok(typeof res.body?.counted !== 'undefined', '[API-07b] Response includes counted field');
-    t.equal(res.body?.counted, true, '[API-07c] First view is counted');
+    t.ok(typeof res.body?.recorded !== 'undefined', '[API-07b] Response includes recorded field');
+    t.equal(res.body?.recorded, true, '[API-07c] First view is counted');
   }
 
   // [API-08] Same visitor same day → deduplicated
@@ -245,7 +245,7 @@ if (freeSlug) {
       headers: { 'X-Visitor-Id': 'qa-test-visitor-unique-001' },
     });
     t.ok(res.ok, '[API-08] POST /view again → 200 (not 4xx)', { status: res.status });
-    t.equal(res.body?.counted, false, '[API-08b] Duplicate view is NOT counted (deduplicated)');
+    t.equal(res.body?.recorded, false, '[API-08b] Duplicate view is NOT counted (deduplicated)');
   }
 
   // Different visitor → new count
@@ -255,7 +255,7 @@ if (freeSlug) {
       headers: { 'X-Visitor-Id': 'qa-test-visitor-unique-002' },
     });
     t.ok(res.ok, '[API-08c] Different visitor view → 200');
-    t.equal(res.body?.counted, true, '[API-08d] Different visitor view IS counted');
+    t.equal(res.body?.recorded, true, '[API-08d] Different visitor view IS counted');
   }
 }
 

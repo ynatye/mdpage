@@ -1,8 +1,29 @@
 # mdpage — Environment Variable Reference
 
-All variables are optional and have safe defaults. Set them via a `.env` file
-(loaded automatically by docker-compose) or export them in the shell before
-starting `node server.js`.
+This document is the canonical reference for runtime configuration in Phase 1.
+
+Configuration sources (highest precedence first):
+1. Shell environment (`export KEY=value` before start)
+2. `.env` file (auto-loaded by `docker compose`)
+3. Code defaults in `server.js`
+
+---
+
+## Quick Matrix
+
+| Variable | Default | Scope | Typical Production Value |
+|---|---:|---|---|
+| `PORT` | `3456` | HTTP server bind port | `3456` |
+| `NODE_ENV` | `development` | Runtime mode + CORS behavior | `production` |
+| `LC_MIN_AGE_DAYS` | `30` | Lifecycle evaluator | `30` |
+| `LC_UNIQUE_VIEW_THRESHOLD` | `10` | Lifecycle evaluator | `10-50` |
+| `LC_AT_RISK_WINDOW_DAYS` | `7` | Lifecycle evaluator | `7-14` |
+| `LIFECYCLE_INTERVAL_MS` | `86400000` | Lifecycle scheduler cadence | `86400000` |
+| `RATE_PUBLISH_MAX` | `5` | Publish endpoint limiter | `5-20` |
+| `RATE_PUBLISH_WIN` | `3600` | Publish limiter window (seconds) | `3600` |
+| `RATE_VIEW_MAX` | `60` | View endpoint limiter | `60-300` |
+| `RATE_VIEW_WIN` | `60` | View limiter window (seconds) | `60` |
+| `LOG_LEVEL` | `info` (prod), `debug` (dev) | Structured logging filter | `info` |
 
 ---
 
@@ -10,147 +31,102 @@ starting `node server.js`.
 
 ### `PORT`
 
-| | |
-|---|---|
-| **Default** | `3456` |
-| **Type** | Integer |
-| **Example** | `PORT=8080` |
+- Default: `3456`
+- Type: integer
+- Example: `PORT=8080`
 
-TCP port the HTTP server listens on. When running behind a reverse proxy (nginx, Caddy), this can stay at the default — the proxy handles the public port.
-
----
+TCP port the Express server listens on.
 
 ### `NODE_ENV`
 
-| | |
-|---|---|
-| **Default** | `development` |
-| **Values** | `development` · `production` |
-| **Example** | `NODE_ENV=production` |
+- Default: `development`
+- Allowed values: `development`, `production`
+- Example: `NODE_ENV=production`
 
-Controls several behaviour changes:
-
-- **CORS** — in development, CORS is open to `http://localhost:5173` (Vite dev server). In production, same-origin only (SPA is served from the same Express process).
-- **Log level** — production defaults to `info`; development allows `debug`.
-- **Error detail** — stack traces are suppressed in production responses.
+Effects in Phase 1:
+- CORS policy differs by environment
+- default logging verbosity differs (`debug` in dev, `info` in prod)
+- production responses suppress stack details
 
 ---
 
 ## Lifecycle Engine
 
-These variables tune how long free-tier articles survive before entering the
-at-risk window and eventually expiring.
+These tune the free-tier article lifecycle transitions.
 
 ### `LC_MIN_AGE_DAYS`
 
-| | |
-|---|---|
-| **Default** | `30` |
-| **Type** | Integer (days) |
-| **Example** | `LC_MIN_AGE_DAYS=14` |
+- Default: `30`
+- Type: integer (days)
+- Example: `LC_MIN_AGE_DAYS=14`
 
-A free article is immune from lifecycle evaluation until it is this many days old. New articles will not be flagged as at-risk regardless of view counts.
-
-**Tuning:** Lower this for faster product feedback loops. Raise it to give users more time to share their content.
-
----
+A free article is ignored by lifecycle state transitions until this age.
 
 ### `LC_UNIQUE_VIEW_THRESHOLD`
 
-| | |
-|---|---|
-| **Default** | `10` |
-| **Type** | Integer (views) |
-| **Example** | `LC_UNIQUE_VIEW_THRESHOLD=25` |
+- Default: `10`
+- Type: integer (unique visitors over rolling 30d)
+- Example: `LC_UNIQUE_VIEW_THRESHOLD=25`
 
-Minimum number of unique visitors (rolling 30 days) for a free article to be considered "healthy". Articles below this threshold after `LC_MIN_AGE_DAYS` enter `at_risk` status.
-
-**Tuning:** Set higher on high-traffic instances to focus lifecycle pressure on genuinely low-engagement content. Set lower (even `1`) during development to test transitions.
-
----
+If an article is old enough and below this threshold, it enters `at_risk`.
 
 ### `LC_AT_RISK_WINDOW_DAYS`
 
-| | |
-|---|---|
-| **Default** | `7` |
-| **Type** | Integer (days) |
-| **Example** | `LC_AT_RISK_WINDOW_DAYS=14` |
+- Default: `7`
+- Type: integer (days)
+- Example: `LC_AT_RISK_WINDOW_DAYS=14`
 
-Days an at-risk article has to recover (reach `LC_UNIQUE_VIEW_THRESHOLD` again) before it expires. The countdown banner on the article page counts down to `atRiskStartedAt + LC_AT_RISK_WINDOW_DAYS`.
-
-**Tuning:** Longer windows are more forgiving; shorter windows create urgency (upgrade pressure). 7 days is the default minimum to avoid surprising authors.
-
----
+Grace period before an at-risk article expires if traffic does not recover.
 
 ### `LIFECYCLE_INTERVAL_MS`
 
-| | |
-|---|---|
-| **Default** | `86400000` (24 hours) |
-| **Type** | Integer (milliseconds) |
-| **Example** | `LIFECYCLE_INTERVAL_MS=3600000` |
+- Default: `86400000` (24h)
+- Type: integer (milliseconds)
+- Example: `LIFECYCLE_INTERVAL_MS=3600000`
 
-How often the lifecycle sweep runs. Each sweep checks every free article and applies state transitions.
+Background sweep interval for lifecycle processing.
 
-**Tuning:** In production, 24h is correct — lifecycle granularity is in days. During development/testing, set to `60000` (1 minute) to see transitions happen in real time.
-
-⚠️ Frequent sweeps have no correctness impact (transitions are idempotent) but do add light I/O on large article sets.
+Recommended:
+- production: keep at `86400000`
+- local lifecycle testing: lower temporarily (for example `60000`)
 
 ---
 
 ## Rate Limiting
 
-Rate limits are applied per IP address, tracked in memory. Limits reset when the
-server restarts (in-memory only — no Redis or persistent store).
+All limits are in-memory per process (reset on restart).
 
 ### `RATE_PUBLISH_MAX`
 
-| | |
-|---|---|
-| **Default** | `5` |
-| **Type** | Integer |
-| **Example** | `RATE_PUBLISH_MAX=3` |
+- Default: `5`
+- Type: integer
+- Example: `RATE_PUBLISH_MAX=10`
 
-Maximum number of publish requests allowed per IP per `RATE_PUBLISH_WIN` seconds.
-
----
+Maximum publish requests per IP in each publish window.
 
 ### `RATE_PUBLISH_WIN`
 
-| | |
-|---|---|
-| **Default** | `3600` (1 hour) |
-| **Type** | Integer (seconds) |
-| **Example** | `RATE_PUBLISH_WIN=7200` |
+- Default: `3600`
+- Type: integer (seconds)
+- Example: `RATE_PUBLISH_WIN=1800`
 
-Sliding window duration for publish rate limiting.
-
----
+Window size for publish throttling.
 
 ### `RATE_VIEW_MAX`
 
-| | |
-|---|---|
-| **Default** | `60` |
-| **Type** | Integer |
-| **Example** | `RATE_VIEW_MAX=120` |
+- Default: `60`
+- Type: integer
+- Example: `RATE_VIEW_MAX=120`
 
-Maximum view recording requests allowed per IP per `RATE_VIEW_WIN` seconds.
-
----
+Maximum view-record requests per IP in each view window.
 
 ### `RATE_VIEW_WIN`
 
-| | |
-|---|---|
-| **Default** | `60` (1 minute) |
-| **Type** | Integer (seconds) |
-| **Example** | `RATE_VIEW_WIN=120` |
+- Default: `60`
+- Type: integer (seconds)
+- Example: `RATE_VIEW_WIN=60`
 
-Sliding window duration for view rate limiting.
-
-**Note:** View rate limits should be generous enough that a single reader browsing multiple articles is not throttled. Tighten `RATE_PUBLISH_*` to control spam; keep `RATE_VIEW_*` loose.
+Window size for view throttling.
 
 ---
 
@@ -158,36 +134,22 @@ Sliding window duration for view rate limiting.
 
 ### `LOG_LEVEL`
 
-| | |
-|---|---|
-| **Default** | `info` (production) · `debug` (development) |
-| **Values** | `debug` · `info` · `warn` · `error` |
-| **Example** | `LOG_LEVEL=debug` |
+- Default: `info` in production, `debug` in development
+- Allowed values: `debug`, `info`, `warn`, `error`
+- Example: `LOG_LEVEL=warn`
 
-Controls the minimum severity of log events that are written to stdout. Logs are structured JSON (one object per line), suitable for ingestion by log aggregators (Datadog, Loki, CloudWatch, etc).
-
-**Log fields common to all events:**
-
-```json
-{
-  "ts": "2026-02-18T06:00:00.000Z",
-  "level": "info",
-  "msg": "article published",
-  "slug": "my-article-abc12345x",
-  "tier": "free"
-}
-```
+Sets the minimum log severity emitted to stdout (JSON lines).
 
 ---
 
-## Example `.env` File
+## Example `.env`
 
 ```dotenv
 # Server
 PORT=3456
 NODE_ENV=production
 
-# Lifecycle (default values shown — remove lines to accept defaults)
+# Lifecycle
 LC_MIN_AGE_DAYS=30
 LC_UNIQUE_VIEW_THRESHOLD=10
 LC_AT_RISK_WINDOW_DAYS=7
@@ -203,4 +165,4 @@ RATE_VIEW_WIN=60
 LOG_LEVEL=info
 ```
 
-Save as `.env` in the project root. **Do not commit `.env` to git** — it is listed in `.gitignore`.
+Never commit your real `.env` file.

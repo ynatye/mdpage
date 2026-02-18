@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
+import AdSlot from '@/components/AdSlot'
+import AtRiskBanner from '@/components/AtRiskBanner'
 
 // Helper: upsert a <meta> tag by attribute/value pair.
 function setMetaTag(attribute, value, content) {
@@ -22,11 +24,88 @@ function formatDate(isoString) {
   })
 }
 
+// ── Derived helpers ────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the article should show ads.
+ * Defensive: if tier/adEnabled fields are absent, falls back to false
+ * (no ads shown rather than accidental ads on a paid post).
+ */
+function shouldShowAds(meta) {
+  if (!meta) return false
+  // Explicit adEnabled flag takes precedence when present.
+  if (typeof meta.adEnabled === 'boolean') return meta.adEnabled
+  // Fall back to tier if adEnabled not yet persisted by backend.
+  return meta.tier === 'free'
+}
+
+/**
+ * Returns true if the article is at risk of expiry.
+ */
+function isAtRisk(meta) {
+  if (!meta) return false
+  return meta.status === 'at_risk'
+}
+
+/**
+ * Returns true if the article has expired.
+ */
+function isExpired(meta) {
+  if (!meta) return false
+  return meta.status === 'expired'
+}
+
+// ── Expired post page ──────────────────────────────────────────────────────
+
+function ExpiredPage({ title }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div
+        className="text-center max-w-md mx-auto px-4"
+        style={{ fontFamily: 'Geist Mono, monospace' }}
+      >
+        <div className="text-6xl mb-6">📭</div>
+        <h1 className="text-2xl font-bold mb-3 text-foreground">
+          {title ? `"${title}" Has Expired` : 'This Post Has Expired'}
+        </h1>
+        <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
+          This free post didn't receive enough traffic to remain active and has
+          been archived.
+        </p>
+        <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
+          Free posts expire after 30 days with low traffic. Paid posts are kept
+          permanently and are ad-free with a clean slug.
+        </p>
+        <a
+          href="/"
+          className="inline-block rounded bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          Publish a new post
+        </a>
+        <div className="mt-4">
+          <a
+            href="/"
+            className="text-xs text-muted-foreground hover:opacity-70 underline underline-offset-2"
+          >
+            Learn about Paid posts →
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main Article component ─────────────────────────────────────────────────
+
 export default function Article() {
   const { slug } = useParams()
   const [article, setArticle] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  // Tracks an expired article title so ExpiredPage can show it.
+  const [expiredTitle, setExpiredTitle] = useState(null)
+  // True when the API explicitly returned 410 / status:expired.
+  const [articleExpired, setArticleExpired] = useState(false)
   const articleContentRef = useRef(null)
 
   useChartHydration(articleContentRef, [article])
@@ -39,9 +118,24 @@ export default function Article() {
     const fetchArticle = async () => {
       setLoading(true)
       setError(null)
+      setArticleExpired(false)
+      setExpiredTitle(null)
 
       try {
         const response = await fetch(`/api/articles/${slug}`)
+
+        // ── Issue #9: Handle expired responses ────────────────────────────
+        // Backend may return 410 Gone for expired posts with a JSON body,
+        // or 200 with status:'expired'. Both are handled gracefully.
+        if (response.status === 410) {
+          const data = await response.json().catch(() => ({}))
+          if (!cancelled) {
+            setExpiredTitle(data.title ?? null)
+            setArticleExpired(true)
+            setLoading(false)
+          }
+          return
+        }
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}))
@@ -50,6 +144,14 @@ export default function Article() {
 
         const data = await response.json()
         if (cancelled) return
+
+        // ── Issue #9: 200 response with status:'expired' ──────────────────
+        if (data.meta?.status === 'expired' || isExpired(data.meta)) {
+          setExpiredTitle(data.title ?? null)
+          setArticleExpired(true)
+          setLoading(false)
+          return
+        }
 
         setArticle(data)
 
@@ -86,7 +188,9 @@ export default function Article() {
     }
 
     fetchArticle()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [slug])
 
   // ── Loading state ──────────────────────────────────────────────────────────
@@ -99,7 +203,10 @@ export default function Article() {
             role="status"
             aria-label="Loading"
           />
-          <p className="text-sm text-muted-foreground" style={{ fontFamily: 'Geist Mono, monospace' }}>
+          <p
+            className="text-sm text-muted-foreground"
+            style={{ fontFamily: 'Geist Mono, monospace' }}
+          >
             Loading…
           </p>
         </div>
@@ -107,11 +214,19 @@ export default function Article() {
     )
   }
 
+  // ── Issue #9: Expired state ────────────────────────────────────────────────
+  if (articleExpired) {
+    return <ExpiredPage title={expiredTitle} />
+  }
+
   // ── Error state ────────────────────────────────────────────────────────────
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center max-w-md mx-auto px-4" style={{ fontFamily: 'Geist Mono, monospace' }}>
+        <div
+          className="text-center max-w-md mx-auto px-4"
+          style={{ fontFamily: 'Geist Mono, monospace' }}
+        >
           <div className="text-6xl mb-6">📄</div>
           <h1 className="text-2xl font-bold mb-3 text-foreground">Article Not Found</h1>
           <p className="text-muted-foreground mb-6 text-sm leading-relaxed">
@@ -119,7 +234,10 @@ export default function Article() {
               ? "The article you're looking for doesn't exist or has been removed."
               : error}
           </p>
-          <a href="/" className="text-primary hover:opacity-70 text-sm underline underline-offset-2">
+          <a
+            href="/"
+            className="text-primary hover:opacity-70 text-sm underline underline-offset-2"
+          >
             ← Back to mdpage
           </a>
         </div>
@@ -129,10 +247,26 @@ export default function Article() {
 
   if (!article) return null
 
+  // ── Derived flags (Issue #5, #8) ──────────────────────────────────────────
+  const showAds = shouldShowAds(article.meta)
+  const atRisk = isAtRisk(article.meta)
+
   // ── Article ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background">
       <article className="max-w-[680px] mx-auto px-6 py-12 lg:py-16">
+
+        {/* ── Issue #8: At-risk banner ─────────────────────────────────────── */}
+        {atRisk && (
+          <AtRiskBanner
+            expiresAt={article.meta.expiresAt}
+            upgradeHref="/"
+          />
+        )}
+
+        {/* ── Issue #5: Top ad slot (free posts only) ──────────────────────── */}
+        {showAds && <AdSlot variant="banner" label="Advertisement" />}
+
         <header className="mb-12">
           <h1
             className="text-4xl lg:text-5xl font-bold leading-tight mb-4 text-foreground"
@@ -147,14 +281,32 @@ export default function Article() {
             <time dateTime={article.meta.createdAt}>{formatDate(article.meta.createdAt)}</time>
             <span aria-hidden>•</span>
             <span>{article.meta.readingTime}</span>
+            {/* Tier badge — subtle, informational */}
+            {article.meta.tier === 'free' && (
+              <>
+                <span aria-hidden>•</span>
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground/70"
+                  title="This is a free post. It is ad-supported and expires if traffic drops."
+                >
+                  free
+                </span>
+              </>
+            )}
           </div>
         </header>
+
+        {/* ── Issue #5: In-article ad (free posts, before main content) ────── */}
+        {showAds && <AdSlot variant="inline" label="Sponsored" />}
 
         <div
           ref={articleContentRef}
           className="article-prose"
           dangerouslySetInnerHTML={{ __html: article.content }}
         />
+
+        {/* ── Issue #5: Footer ad slot (free posts only) ───────────────────── */}
+        {showAds && <AdSlot variant="banner" label="Advertisement" />}
 
         <footer className="mt-16 pt-8 border-t border-border">
           <div className="text-center">

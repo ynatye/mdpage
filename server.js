@@ -488,6 +488,16 @@ app.get('/api/internal/config', (_req, res) => {
   });
 });
 
+/**
+ * GET /healthz
+ *
+ * Lightweight liveness probe for Docker / load balancers.
+ * Does not require the frontend to be built.
+ */
+app.get('/healthz', (_req, res) => {
+  res.json({ status: 'ok', ts: new Date().toISOString() });
+});
+
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 
 app.use((req, res) => {

@@ -1,0 +1,57 @@
+version: "3.9"
+
+# ── mdpage docker-compose ─────────────────────────────────────────────────────
+#
+# Quick start:
+#   docker-compose up -d
+#   open http://localhost:3456
+#
+# Stop:
+#   docker-compose down
+#
+# Rebuild after code change:
+#   docker-compose up -d --build
+#
+# Data is persisted in ./data (mapped from container's /app/data).
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  mdpage:
+    build: .
+    image: mdpage:latest
+    container_name: mdpage
+    restart: unless-stopped
+
+    ports:
+      - "${PORT:-3456}:${PORT:-3456}"
+
+    environment:
+      NODE_ENV: production
+      PORT: "${PORT:-3456}"
+
+      # Lifecycle thresholds (tune these for your traffic profile)
+      LC_MIN_AGE_DAYS: "${LC_MIN_AGE_DAYS:-30}"
+      LC_UNIQUE_VIEW_THRESHOLD: "${LC_UNIQUE_VIEW_THRESHOLD:-10}"
+      LC_AT_RISK_WINDOW_DAYS: "${LC_AT_RISK_WINDOW_DAYS:-7}"
+      LIFECYCLE_INTERVAL_MS: "${LIFECYCLE_INTERVAL_MS:-86400000}"
+
+      # Rate limits
+      RATE_PUBLISH_MAX: "${RATE_PUBLISH_MAX:-5}"
+      RATE_PUBLISH_WIN: "${RATE_PUBLISH_WIN:-3600}"
+      RATE_VIEW_MAX: "${RATE_VIEW_MAX:-60}"
+      RATE_VIEW_WIN: "${RATE_VIEW_WIN:-60}"
+
+      # Logging
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+
+    volumes:
+      # Persist article data outside the container.
+      # Back this up! It contains all published articles.
+      - ./data:/app/data
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:${PORT:-3456}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

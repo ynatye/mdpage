@@ -30,10 +30,9 @@ Implemented in this branch:
         │
         ▼
 [file-backed storage under ./data]
-  ├─ data/articles/index.json
-  ├─ data/articles/<slug>/article.json
-  ├─ data/articles/<slug>/content.md
-  └─ data/views/<slug>/<YYYY-MM-DD>.json
+  ├─ data/index.json
+  ├─ data/articles/<slug>.md
+  └─ data/views/<slug>.json
 ```
 
 This is a single-service architecture designed for fast iteration and single-host deploys.

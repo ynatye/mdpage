@@ -135,7 +135,13 @@ Record a page view. Idempotent — repeated calls from the same visitor on the s
 
 ### Request body
 
-Empty body is fine. The server fingerprints the visitor from IP + User-Agent headers.
+Empty body is fine.
+
+### Optional header
+
+| Header | Type | Notes |
+|---|---|---|
+| `X-Visitor-Id` | string | Client-stable UUID (recommended). If missing, server falls back to `IP + User-Agent`. |
 
 ### Response (200 OK)
 
@@ -154,6 +160,7 @@ Empty body is fine. The server fingerprints the visitor from IP + User-Agent hea
 ### Notes
 
 - Call this endpoint **once** after the article loads (e.g. `useEffect` on mount)
+- Prefer setting `X-Visitor-Id` from localStorage for stable daily dedupe
 - 429 is returned if the IP exceeds 60 view requests per minute
 - Expired articles return 410
 

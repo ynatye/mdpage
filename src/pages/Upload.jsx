@@ -10,7 +10,8 @@ import TierSelector from '@/components/TierSelector'
 export default function Upload() {
   const [markdown, setMarkdown] = useState('')
   const [slug, setSlug] = useState('')
-  const [slugManual, setSlugManual] = useState(false) // true once user edits the slug field
+  // true once user edits slug in paid tier; free tier always auto-derives from title
+  const [slugManual, setSlugManual] = useState(false)
   const [renderedHTML, setRenderedHTML] = useState('')
   const [publishedUrl, setPublishedUrl] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)
@@ -37,21 +38,30 @@ export default function Upload() {
     updatePreview(markdown)
   }, [markdown, updatePreview])
 
-  // ── Slug auto-generation from title (only when user hasn't overridden it) ──
+  // ── Slug auto-generation from title ──────────────────────────────────────
+  // Free tier: always auto-derived (input is read-only)
+  // Paid tier: auto-derived until user manually edits
   useEffect(() => {
-    // When the editor is cleared, reset slug + manual flag so a fresh article
-    // gets a clean auto-generated slug (regardless of prior manual override).
     if (!markdown.trim()) {
       setSlug('')
       setSlugManual(false)
       return
     }
-    if (slugManual) return
+
+    if (tier === 'paid' && slugManual) return
+
     const title = extractTitle(markdown)
     if (title && title !== 'Untitled') {
       setSlug(generateSlug(title))
     }
-  }, [markdown, slugManual])
+  }, [markdown, slugManual, tier])
+
+  // Switching to free tier resets manual override so UI mirrors backend rules.
+  useEffect(() => {
+    if (tier === 'free') {
+      setSlugManual(false)
+    }
+  }, [tier])
 
   // ── Chart hydration after preview renders ──────────────────────────────────
   useChartHydration(previewRef, [renderedHTML])
@@ -120,8 +130,8 @@ export default function Upload() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           markdown: markdown.trim(),
-          slug: slug.trim() || undefined,
-          // ── Issue #4: include tier in publish payload ─────────────────────
+          // Backend ignores slug for free tier; only send it for paid posts.
+          slug: tier === 'paid' ? slug.trim() || undefined : undefined,
           tier,
         }),
       })
@@ -196,10 +206,11 @@ export default function Upload() {
               value={slug}
               onChange={(e) => {
                 setSlug(e.target.value)
-                setSlugManual(true)
+                if (tier === 'paid') setSlugManual(true)
               }}
-              placeholder="article-slug"
-              className="border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-sm min-w-0"
+              placeholder={tier === 'paid' ? 'custom-slug' : 'auto-from-title'}
+              disabled={tier === 'free'}
+              className="border-0 bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-sm min-w-0 disabled:opacity-70"
             />
             {/* Free suffix hint */}
             {showFreeSuffix && (
@@ -244,7 +255,7 @@ export default function Upload() {
           <span aria-hidden>·</span>
           <span>Ad-supported</span>
           <span aria-hidden>·</span>
-          <span>Slug gets a random suffix</span>
+          <span>Slug auto-generated from title + random suffix</span>
           <span aria-hidden>·</span>
           <span>Expires if unread after 30 days</span>
         </div>

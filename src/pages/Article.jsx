@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import AdSlot from '@/components/AdSlot'
@@ -73,6 +73,21 @@ function isExpired(meta) {
   return meta.status === 'expired'
 }
 
+/**
+ * Fire-and-forget view tracking. Uses keepalive to avoid drops during
+ * navigation/unload; failures are intentionally ignored.
+ */
+function trackView(slug) {
+  const visitorId = getOrCreateVisitorId()
+  fetch(`/api/articles/${slug}/view`, {
+    method: 'POST',
+    headers: { 'X-Visitor-Id': visitorId },
+    keepalive: true,
+  }).catch(() => {
+    // Never impact article rendering for telemetry errors.
+  })
+}
+
 // ── Expired post page ──────────────────────────────────────────────────────
 
 function ExpiredPage({ title }) {
@@ -125,11 +140,15 @@ export default function Article() {
   // True when the API explicitly returned 410 / status:expired.
   const [articleExpired, setArticleExpired] = useState(false)
   const articleContentRef = useRef(null)
+  const trackedSlugRef = useRef(null)
 
   useChartHydration(articleContentRef, [article])
 
   useEffect(() => {
     if (!slug) return
+
+    // New slug route → allow tracking once for this slug.
+    trackedSlugRef.current = null
 
     let cancelled = false
 
@@ -150,6 +169,7 @@ export default function Article() {
           if (!cancelled) {
             setExpiredTitle(data.title ?? null)
             setArticleExpired(true)
+            document.title = 'Expired Post — mdpage'
             setLoading(false)
           }
           return
@@ -167,6 +187,7 @@ export default function Article() {
         if (data.meta?.status === 'expired' || isExpired(data.meta)) {
           setExpiredTitle(data.title ?? null)
           setArticleExpired(true)
+          document.title = 'Expired Post — mdpage'
           setLoading(false)
           return
         }
@@ -191,16 +212,10 @@ export default function Article() {
         setMetaTag('name', 'twitter:description', data.meta.description)
 
         // ── View tracking ─────────────────────────────────────────────────
-        // Fire-and-forget: don't let a tracking failure affect article render.
-        // Only track non-expired articles (expired returns early above).
-        try {
-          const visitorId = getOrCreateVisitorId()
-          await fetch(`/api/articles/${slug}/view`, {
-            method: 'POST',
-            headers: { 'X-Visitor-Id': visitorId },
-          })
-        } catch {
-          // Silently swallow tracking errors — never break the reader experience.
+        // Track once per slug render path (StrictMode/dev-safe).
+        if (trackedSlugRef.current !== slug) {
+          trackedSlugRef.current = slug
+          trackView(slug)
         }
       } catch (err) {
         if (cancelled) return

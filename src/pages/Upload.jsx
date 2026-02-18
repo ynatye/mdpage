@@ -154,6 +154,7 @@ export default function Upload() {
   }
 
   const openArticle = () => window.open(publishedUrl, '_blank')
+  const canPublish = markdown.trim().length > 0
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -191,8 +192,12 @@ export default function Upload() {
 
         <Button
           onClick={handlePublish}
-          disabled={isPublishing || !markdown.trim()}
-          className="shrink-0"
+          disabled={isPublishing || !canPublish}
+          className={`shrink-0 transition-all duration-200 ${
+            canPublish
+              ? 'text-white shadow-[0_0_0_1px_hsl(var(--primary)/0.24),0_0_14px_hsl(var(--primary)/0.38)] hover:shadow-[0_0_0_1px_hsl(var(--primary)/0.28),0_0_18px_hsl(var(--primary)/0.46)]'
+              : ''
+          }`}
         >
           {isPublishing ? 'Publishing…' : 'Publish'}
         </Button>

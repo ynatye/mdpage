@@ -133,21 +133,32 @@ async function waitForServer(url, timeoutMs) {
   }
 
   let exitCode = 0;
-  try {
-    console.log('[integration] Running api-phase1.test.js…\n');
-    execFileSync(
-      process.execPath,
-      [path.join(ROOT, 'tests/integration/api-phase1.test.js')],
-      {
-        env:   { ...process.env, SERVER_URL },
-        stdio: 'inherit',
-        cwd:   ROOT,
-      }
-    );
-    console.log('\n[integration] ✓ Integration tests passed');
-  } catch (err) {
-    console.error('\n[integration] ✗ Integration tests FAILED');
-    exitCode = 1;
+  const suites = [
+    'tests/integration/api-phase1.test.js',
+    'tests/integration/api-phase2.test.js',
+  ];
+
+  for (const suite of suites) {
+    try {
+      console.log(`[integration] Running ${path.basename(suite)}…\n`);
+      execFileSync(
+        process.execPath,
+        [path.join(ROOT, suite)],
+        {
+          env:   { ...process.env, SERVER_URL },
+          stdio: 'inherit',
+          cwd:   ROOT,
+        }
+      );
+      console.log(`\n[integration] ✓ ${path.basename(suite)} passed`);
+    } catch (err) {
+      console.error(`\n[integration] ✗ ${path.basename(suite)} FAILED`);
+      exitCode = 1;
+    }
+  }
+
+  if (exitCode === 0) {
+    console.log('\n[integration] ✓ All integration suites passed');
   }
 
   cleanup();

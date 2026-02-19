@@ -356,3 +356,95 @@ node scripts/health-check.js
 ```
 
 If any step fails, address incident section above before continuing operations.
+
+---
+
+## 8) Phase 2 Operations
+
+### Billing readiness check
+
+```bash
+curl -s http://localhost:3456/api/internal/billing-config \
+  -H "x-internal-token: $TOKEN" | python3 -m json.tool
+```
+
+Response includes:
+- `provider` — `none` (stub) or `stripe`
+- `ready` — `true` only when all required keys are present
+- `issues` — list of missing/misconfigured items
+- `config.hasSecretKey`, `config.hasWebhookSecret` — boolean flags (keys are not exposed)
+
+### Stripe webhook endpoint
+
+Configure Stripe to send events to:
+```
+POST https://yoursite.com/api/webhooks/stripe
+```
+
+Events to enable: `checkout.session.completed`, `payment_intent.payment_failed`,
+`charge.refunded`, `customer.subscription.deleted`, `customer.subscription.updated`
+
+Verify a webhook delivery is working:
+```bash
+# Should return { received: true, skipped: true } in stub mode
+curl -s -X POST http://localhost:3456/api/webhooks/stripe \
+  -H "Content-Type: application/json" \
+  -d '{}' | python3 -m json.tool
+```
+
+### Abuse log inspection
+
+```bash
+curl -s http://localhost:3456/api/internal/abuse \
+  -H "x-internal-token: $TOKEN" | python3 -m json.tool
+```
+
+### Runtime IP blocking
+
+```bash
+# Block an IP immediately (in-memory, resets on restart)
+curl -s -X POST http://localhost:3456/api/internal/abuse/block \
+  -H "x-internal-token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ip": "1.2.3.4", "action": "block"}'
+
+# Add to warn list (score+1)
+curl -s -X POST http://localhost:3456/api/internal/abuse/block \
+  -H "x-internal-token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ip": "5.6.7.8", "action": "warn"}'
+
+# Unblock
+curl -s -X POST http://localhost:3456/api/internal/abuse/block \
+  -H "x-internal-token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ip": "1.2.3.4", "action": "unblock"}'
+```
+
+For persistent blocking across restarts, add the IP to `ABUSE_BLOCK_LIST` in `.env` and restart.
+
+### Checkout flow troubleshooting
+
+If a user reports a failed upgrade:
+
+1. Check billing status: `GET /api/checkout/status/:slug`
+2. If `billingStatus=pending` and no webhook was received, the Stripe event may be delayed or the webhook endpoint is misconfigured
+3. Check server logs for `webhook.stripe.*` events
+4. If `billingStatus=refunded` or `expired`, the entitlement was revoked — investigate the Stripe event that triggered it
+
+### Manual entitlement grant (emergency)
+
+If a payment was confirmed but the webhook failed to fire:
+
+```bash
+# 1) Get current article state
+curl -s http://localhost:3456/api/internal/lifecycle/myslug \
+  -H "x-internal-token: $TOKEN"
+
+# 2) Send a synthetic checkout.session.completed event to the webhook
+# (in test/stub mode only — for production use Stripe Dashboard "Resend")
+# Or edit data/index.json manually (under index lock — stop server first)
+docker compose stop mdpage
+vim data/index.json   # set tier=paid, adEnabled=false, billingStatus=active
+docker compose start mdpage
+```

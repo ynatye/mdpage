@@ -6,7 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — Phase 2
+## [1.1.0-rc1] — 2026-02-19 — Phase 2 Release Candidate
+
+### Added (Day 10 — RC prep + release prep)
+
+- `tests/integration/api-phase2.test.js` — 37 integration tests covering all Phase 2 endpoints (P2-01..P2-10): lifecycleUx in article response, /status endpoint, checkout session (valid/invalid/duplicate), checkout status poll, webhook stub mode, internal billing-config, internal abuse log
+- `scripts/test-integration.js` — updated to run both phase1 and phase2 suites sequentially; total: 69 integration tests
+- `README.md` — rewritten for Phase 2: feature status table, full architecture diagram, API summary table, billing setup guide, abuse controls scoring table
+- `ROADMAP.md` — Phase 2 day-by-day completion record + Phase 3 plan
+- `ENV.md` — Billing (BILLING_*, STRIPE_*) and Abuse (ABUSE_*) variable reference with full docs
+- `RUNBOOK.md` — Phase 2 operations section: billing readiness check, webhook setup, abuse log inspection, runtime IP blocking, checkout troubleshooting, manual entitlement grant
+- `package.json` — version bump `1.0.0` → `1.1.0-rc1`
+- Unit test count: 253 (all green)
+- Integration test count: 69 (32 Phase 1 + 37 Phase 2, all green)
 
 ### Added (Day 9 — abuse controls v2)
 

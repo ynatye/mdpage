@@ -228,6 +228,126 @@ Linear backoff base between integration retry attempts.
 
 ---
 
+---
+
+## Billing (Phase 2)
+
+### `BILLING_PROVIDER`
+
+- Default: `none`
+- Allowed: `none`, `stripe`
+
+Set to `stripe` to enable real payment flows. In `none` mode the checkout API and webhook endpoint work in stub/mock mode (no charges possible).
+
+### `STRIPE_SECRET_KEY`
+
+- Default: unset
+- Required when `BILLING_PROVIDER=stripe`
+
+Stripe secret key (`sk_live_*` or `sk_test_*`). Never expose to clients.
+
+### `STRIPE_PUBLISHABLE_KEY`
+
+- Default: unset
+- Required when `BILLING_PROVIDER=stripe`
+
+Stripe publishable key for client-side Stripe.js (currently informational — stored in billing config for future SPA use).
+
+### `STRIPE_WEBHOOK_SECRET`
+
+- Default: unset
+- Required when `BILLING_PROVIDER=stripe`
+
+Webhook signing secret (`whsec_*`). Used for HMAC verification on `POST /api/webhooks/stripe`. Without this, all webhooks are rejected with 400.
+
+### `BILLING_PAID_PRICE_ID`
+
+- Default: unset
+- Type: string
+
+Stripe Price ID to use in checkout line items. If unset, falls back to inline `price_data` using `BILLING_AMOUNT_CENTS`.
+
+### `BILLING_SUCCESS_URL`
+
+- Default: unset
+
+Redirect URL after successful checkout. Stripe appends `?session_id={CHECKOUT_SESSION_ID}`.
+
+### `BILLING_CANCEL_URL`
+
+- Default: unset
+
+Redirect URL when user abandons checkout (clicks "Back").
+
+### `BILLING_CURRENCY`
+
+- Default: `usd`
+- Type: ISO-4217 currency code
+
+Used in inline `price_data` when `BILLING_PAID_PRICE_ID` is not set.
+
+### `BILLING_AMOUNT_CENTS`
+
+- Default: `900` ($9.00)
+- Type: integer (cents)
+
+One-time price in cents. Used when `BILLING_PAID_PRICE_ID` is not set.
+
+---
+
+## Abuse Controls (Phase 2)
+
+### `ABUSE_BLOCK_LIST`
+
+- Default: unset
+- Type: comma-separated IP addresses
+
+IPs to hard-block on publish requests. Block-listed IPs get score+2 → 403 fake-success response.
+
+### `ABUSE_WARN_LIST`
+
+- Default: unset
+- Type: comma-separated IP addresses
+
+Suspicious IPs to flag and log. Warn-listed IPs get score+1 → logged but allowed (unless other signals push over threshold).
+
+### `ABUSE_BURST_MAX`
+
+- Default: `10`
+- Type: integer
+
+Maximum requests allowed from one IP in the burst window before adding score+1.
+
+### `ABUSE_BURST_WIN`
+
+- Default: `5`
+- Type: integer (seconds)
+
+Burst detection window in seconds.
+
+### `ABUSE_SCORE_LIMIT`
+
+- Default: `2`
+- Type: integer
+
+Minimum combined score to trigger a 429 Retry-After response.
+
+### `ABUSE_SCORE_BLOCK`
+
+- Default: `3`
+- Type: integer
+
+Minimum combined score to trigger a 403 fake-success (honeypot) response.
+
+### `ABUSE_LOG_SIZE`
+
+- Default: `200`
+- Type: integer
+
+Maximum entries in the in-memory abuse event ring buffer (visible at `GET /api/internal/abuse`).
+
+---
+
 ## Example `.env`
 
 ```dotenv
@@ -252,6 +372,23 @@ LOG_LEVEL=info
 
 # Internal dashboard (generate: openssl rand -hex 32)
 INTERNAL_DASHBOARD_TOKEN=
+
+# Billing (Phase 2) — leave empty for stub mode
+# BILLING_PROVIDER=stripe
+# STRIPE_SECRET_KEY=sk_live_...
+# STRIPE_PUBLISHABLE_KEY=pk_live_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# BILLING_PAID_PRICE_ID=price_...
+# BILLING_AMOUNT_CENTS=900
+# BILLING_SUCCESS_URL=https://yoursite.com/checkout/success
+# BILLING_CANCEL_URL=https://yoursite.com/checkout/cancel
+
+# Abuse controls (Phase 2) — all optional
+# ABUSE_BLOCK_LIST=1.2.3.4,5.6.7.8
+# ABUSE_BURST_MAX=10
+# ABUSE_BURST_WIN=5
+# ABUSE_SCORE_LIMIT=2
+# ABUSE_SCORE_BLOCK=3
 ```
 
 Never commit your real `.env` file.

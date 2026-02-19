@@ -191,3 +191,74 @@ Mitigation: preserve and test lock around all write paths.
 - Paid plan billing integration and subscription lifecycle hooks
 - SEO policy finalization for expired content (404 vs 410 vs archive)
 - Better anti-abuse (reputation/IP scoring)
+
+---
+
+## Phase 2 Roadmap (completed — 2026-02-19)
+
+Phase 2 added billing, checkout, webhooks, and hardened operations.
+
+### Day 1 — Internal stats + healthz + Docker
+- `GET /api/internal/stats` health summary
+- `/healthz` liveness probe with data-store checks
+- Docker multi-stage build + docker-compose
+
+### Day 2 — Auth hardening + dashboard polish
+- HMAC-SHA256 session cookies (8h TTL) for `/internal` dashboard
+- `POST /internal/auth` (token from body, not URL), `GET /internal/logout`
+- Redesigned internal dashboard with dark theme, color-coded cards
+
+### Day 3 — Richer monitoring metrics + dry-run lifecycle
+- `POST /api/internal/lifecycle/dry-run` — preview sweep without writing
+- Dashboard: top posts table, expiring-soon table, lifecycle run history
+
+### Day 4 — Sweep concurrency guard + healthz improvements
+- `_sweepInFlight` guard across all sweep entry points (returns 409 when busy)
+- `lib/healthz.js` — extracted testable data-store reachability module
+- Error slug tracking in lifecycle run history
+
+### Day 5 — Lifecycle UX consistency ✅
+- `lib/lifecycle-ux.js` — urgencyLevel, computeDaysLeft, daysLeftText, buildLifecycleUx
+- `GET /api/articles/:slug` — `lifecycleUx` field in response
+- `GET /api/articles/:slug/status` — new lightweight status endpoint
+- AtRiskBanner: urgency-aware colour palette (critical/high/medium/low)
+- LifecycleStatusBar: subtle footer strip for free posts
+
+### Day 6 — Billing schema/config plumbing ✅
+- `lib/billing.js` — PLANS, BILLING_STATUS, defaultBillingMeta, applyEntitlement, revokeEntitlement, hasActiveEntitlement, billingReadiness
+- Billing metadata block added to article index on publish
+- `GET /api/internal/billing-config` — readiness report (keys redacted)
+
+### Day 7 — Checkout initiation flow ✅
+- `lib/checkout.js` — createCheckoutSession (Stripe + stub), hasPendingCheckout, CheckoutError
+- `POST /api/checkout/session` — initiates checkout, sets article to pending
+- `GET /api/checkout/status/:slug` — lightweight billing status poll
+- UpgradeCTA component (button + section variants)
+
+### Day 8 — Webhooks + entitlements ✅
+- `lib/webhooks.js` — verifyStripeWebhook, processStripeEvent, applyWebhookDispatch
+- `POST /api/webhooks/stripe` — HMAC-verified event processing (grant/revoke/update)
+- Handles: checkout.session.completed, charge.refunded, subscription events
+
+### Day 9 — Abuse controls v2 ✅
+- `lib/abuse.js` — fingerprint scoring, burst detection, runtime IP block/warn
+- `GET /api/internal/abuse` — event log + list sizes
+- `POST /api/internal/abuse/block` — runtime IP management
+
+### Day 10 — RC prep + release prep ✅
+- Phase 2 integration test suite (37 tests covering all new endpoints)
+- Version bump to 1.1.0-rc1
+- README, ROADMAP, CHANGELOG, ENV, RUNBOOK updated
+- 253 unit + 69 integration tests, all green
+
+---
+
+## Phase 3 (planned)
+
+- Real ad integration (Google AdSense / Carbon)
+- SEO: sitemap + robots.txt + proper canonical URLs
+- Multi-author: slug namespacing + API keys
+- Analytics dashboard (view trends, lifecycle health)
+- Redis-backed rate limiting + abuse controls for multi-node
+- Subscription billing (Stripe Subscriptions vs one-time)
+- Content CDN for large article assets

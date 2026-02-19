@@ -45,6 +45,14 @@ import {
   applyWebhookDispatch,
   WebhookVerificationError,
 } from './lib/webhooks.js';
+import {
+  abuseGuard,
+  getAbuseLog,
+  blockIp,
+  unblockIp,
+  warnIp,
+  abuseConfig,
+} from './lib/abuse.js';
 import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
@@ -239,6 +247,7 @@ async function isSlugAvailable(slug) {
  */
 app.post(
   '/api/publish',
+  abuseGuard(),        // v2: fingerprint score + burst detection + block/warn lists
   publishRateLimit(),
   honeypot(),
   async (req, res) => {
@@ -747,6 +756,63 @@ app.get('/api/internal/billing-config', apiInternalAuth(), (_req, res) => {
       hasCancelUrl:      Boolean(billingConfig.cancelUrl),
     },
   });
+});
+
+/**
+ * GET /api/internal/abuse
+ *
+ * Returns the in-memory abuse event log and current block/warn list counts.
+ * Events are ordered most-recent-first.
+ *
+ * Response:
+ * {
+ *   blockListSize: number,
+ *   warnListSize:  number,
+ *   log: [{ ts, level, ip, score?, signals?, path?, action? }]
+ * }
+ */
+app.get('/api/internal/abuse', apiInternalAuth(), (_req, res) => {
+  return res.json({
+    blockListSize: abuseConfig.blockList.size,
+    warnListSize:  abuseConfig.warnList.size,
+    config: {
+      burstMax:    abuseConfig.burstMax,
+      burstWinMs:  abuseConfig.burstWinMs,
+      scoreBlock:  abuseConfig.scoreBlock,
+      scoreLimit:  abuseConfig.scoreLimit,
+    },
+    log: getAbuseLog(),
+  });
+});
+
+/**
+ * POST /api/internal/abuse/block
+ *
+ * Add an IP to the runtime block list.
+ * Body: { ip: string, action: 'block' | 'unblock' | 'warn' }
+ */
+app.post('/api/internal/abuse/block', apiInternalAuth(), (req, res) => {
+  const { ip, action = 'block' } = req.body ?? {};
+
+  if (!ip || typeof ip !== 'string') {
+    return res.status(400).json({ error: 'ip is required' });
+  }
+
+  const cleanIp = ip.trim();
+
+  switch (action) {
+    case 'block':
+      blockIp(cleanIp);
+      return res.json({ ok: true, action: 'block', ip: cleanIp });
+    case 'unblock':
+      unblockIp(cleanIp);
+      return res.json({ ok: true, action: 'unblock', ip: cleanIp });
+    case 'warn':
+      warnIp(cleanIp);
+      return res.json({ ok: true, action: 'warn', ip: cleanIp });
+    default:
+      return res.status(400).json({ error: `Unknown action: ${action}` });
+  }
 });
 
 /**

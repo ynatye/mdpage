@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — Phase 2
 
+### Added (Day 9 — abuse controls v2)
+
+- `lib/abuse.js` — abuse controls module:
+  - `abuseConfig` — typed config from env (blockList, warnList, burstMax/Win, scoreLimit/Block, logSize)
+  - `checkBurst(ip)` — tracks request timestamps per IP in a sliding window; returns true when burst threshold exceeded
+  - `scoreRequest(req)` — fingerprint scoring: block_list (+2), warn_list (+1), burst (+1), scripted_ua (+1), xff_stuffed (+1) → `{ score, ip, signals }`
+  - `abuseGuard()` — middleware: score=0 allow; score≥scoreLimit → 429; score≥scoreBlock → 403 fake-success (honeypot); test mode pass-through
+  - `logAbuseEvent(event)` + `getAbuseLog()` — in-memory ring buffer (max logSize events, most-recent-first)
+  - `blockIp(ip)` / `unblockIp(ip)` / `warnIp(ip)` — runtime IP list management
+  - `getClientIp(req)` — X-Forwarded-For → socket.remoteAddress → 'unknown'
+- `POST /api/publish` — `abuseGuard()` added before `publishRateLimit()` + honeypot chain
+- `GET /api/internal/abuse` — returns blockListSize, warnListSize, config, event log (auth'd)
+- `POST /api/internal/abuse/block` — runtime add/remove IP from block/warn list (action: block/unblock/warn; auth'd)
+- `.env.example` — added ABUSE_* variable block with inline docs
+- `tests/unit/abuse.test.js` — 22 new unit tests across AB-01..AB-06
+- Unit test count: 231 → 253
+
 ### Added (Day 8 — webhooks + entitlements)
 
 - `lib/webhooks.js` — webhook event processing:

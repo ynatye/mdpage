@@ -12,7 +12,7 @@
     "start": "node server.js",
     "test": "node scripts/validate-publish.js",
     "test:backend": "node scripts/test-backend.js",
-    "test:unit": "node --test tests/unit/slug-rules.test.js tests/unit/lifecycle.test.js tests/unit/view-dedup.test.js tests/unit/internal-stats.test.js tests/unit/internal-auth.test.js tests/unit/healthz.test.js tests/unit/lifecycle-ux.test.js tests/unit/billing.test.js tests/unit/checkout.test.js tests/unit/webhooks.test.js",
+    "test:unit": "node --test tests/unit/slug-rules.test.js tests/unit/lifecycle.test.js tests/unit/view-dedup.test.js tests/unit/internal-stats.test.js tests/unit/internal-auth.test.js tests/unit/healthz.test.js tests/unit/lifecycle-ux.test.js tests/unit/billing.test.js tests/unit/checkout.test.js tests/unit/webhooks.test.js tests/unit/abuse.test.js",
     "test:phase1": "bash tests/run-qa.sh unit",
     "test:integration": "node scripts/test-integration.js",
     "test:integration:manual": "bash tests/run-qa.sh integration",

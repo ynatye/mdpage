@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — Phase 2
 
+### Added (Day 6 — billing schema/config plumbing)
+
+- `lib/billing.js` — billing plan definitions and configuration plumbing:
+  - `billingConfig` — typed config object from env vars (provider, stripe keys, URLs, currency, amount)
+  - `PLANS` — plan definitions (free/paid) with adEnabled, lifecycle, cleanSlug, permanent flags
+  - `BILLING_STATUS` — constants: none/pending/active/cancelled/expired/refunded
+  - `defaultBillingMeta(tier)` — builds initial billing fields for new articles
+  - `applyEntitlement(meta, entitlement, now)` — upgrades article to paid, persists billing IDs
+  - `revokeEntitlement(meta, reason, now)` — reverts article to free (refund/lapse)
+  - `hasActiveEntitlement(meta)` — checks if article has valid paid access (including legacy)
+  - `billingReadiness()` — config validation: reports missing keys, provider status
+- `POST /api/publish` — new articles now include billing metadata block in index (billingStatus, checkoutSessionId, subscriptionId, customerId, planActivatedAt, planExpiresAt, billingProvider); existing billing metadata preserved on updates
+- `GET /api/internal/billing-config` — new auth'd endpoint returning readiness report and non-sensitive config (keys redacted to boolean flags)
+- `.env.example` — added BILLING_* variable block with inline docs
+- `tests/unit/billing.test.js` — 35 new unit tests across BL-01..BL-06
+- Unit test count: 161 → 196
+
 ### Added (Day 5 — lifecycle UX consistency)
 
 - `lib/lifecycle-ux.js` — pure UX-metadata helpers:

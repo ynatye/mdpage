@@ -30,6 +30,12 @@ import { runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js
 import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
 import { computeInternalStats } from './lib/stats.js';
 import { buildLifecycleUx } from './lib/lifecycle-ux.js';
+import {
+  billingConfig,
+  billingReadiness,
+  defaultBillingMeta,
+  PLANS,
+} from './lib/billing.js';
 import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
@@ -294,6 +300,17 @@ app.post(
         createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
         updatedAt = isUpdate ? new Date().toISOString() : undefined;
 
+        // Preserve existing billing metadata on updates; initialise defaults on create.
+        const existingBilling = isUpdate ? {
+          billingStatus:     index[slug].billingStatus     ?? undefined,
+          checkoutSessionId: index[slug].checkoutSessionId ?? undefined,
+          subscriptionId:    index[slug].subscriptionId    ?? undefined,
+          customerId:        index[slug].customerId        ?? undefined,
+          planActivatedAt:   index[slug].planActivatedAt   ?? undefined,
+          planExpiresAt:     index[slug].planExpiresAt     ?? undefined,
+          billingProvider:   index[slug].billingProvider   ?? undefined,
+        } : defaultBillingMeta(tier);
+
         index[slug] = {
           slug,
           slugBase,
@@ -309,6 +326,7 @@ app.post(
           totalViews: isUpdate ? (index[slug].totalViews ?? 0) : 0,
           atRiskStartedAt: isUpdate ? (index[slug].atRiskStartedAt ?? null) : null,
           expiresAt:       isUpdate ? (index[slug].expiresAt       ?? null) : null,
+          ...existingBilling,
         };
 
         await saveIndex(index);
@@ -694,6 +712,31 @@ app.get('/api/internal/config', apiInternalAuth(), (_req, res) => {
     rateLimit:     rateLimitConfig,
     env:           process.env.NODE_ENV ?? 'development',
     sweepInFlight: _sweepInFlight,
+  });
+});
+
+/**
+ * GET /api/internal/billing-config
+ *
+ * Returns billing subsystem readiness and non-sensitive configuration.
+ * Sensitive keys (secretKey, webhookSecret) are redacted.
+ */
+app.get('/api/internal/billing-config', apiInternalAuth(), (_req, res) => {
+  const readiness = billingReadiness();
+  return res.json({
+    ...readiness,
+    config: {
+      provider:       billingConfig.provider,
+      currency:       billingConfig.currency,
+      amountCents:    billingConfig.amountCents,
+      paidPriceId:    billingConfig.stripe.paidPriceId ?? null,
+      publishableKey: billingConfig.stripe.publishableKey ?? null,
+      // secretKey and webhookSecret are intentionally omitted
+      hasSecretKey:      Boolean(billingConfig.stripe.secretKey),
+      hasWebhookSecret:  Boolean(billingConfig.stripe.webhookSecret),
+      hasSuccessUrl:     Boolean(billingConfig.successUrl),
+      hasCancelUrl:      Boolean(billingConfig.cancelUrl),
+    },
   });
 });
 

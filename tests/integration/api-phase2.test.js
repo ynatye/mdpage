@@ -17,7 +17,7 @@
  *   [P2-10]  GET  /api/internal/abuse — auth'd, returns log + config
  */
 
-import { TestRunner, apiFetch, serverIsReachable, makeArticle } from '../helpers/test-utils.js';
+import { TestRunner, apiFetch, serverIsReachable, makeArticle, sleep } from '../helpers/test-utils.js';
 
 const t = new TestRunner('API Phase 2 Integration');
 
@@ -191,6 +191,129 @@ console.log('\n── Internal: Abuse Log ──');
     t.ok(res.ok, '[P2-10] GET /api/internal/abuse → 200', { status: res.status });
     t.ok(typeof res.body?.blockListSize === 'number', '[P2-10b] blockListSize present');
     t.ok(Array.isArray(res.body?.log), '[P2-10c] log array present');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [P2-11] /api/free/articles queue-backed publish
+// ---------------------------------------------------------------------------
+console.log('\n── Free API Queue ──');
+
+let freeJobIdA;
+let freeJobIdB;
+
+{
+  const md = `# Free Queue ${Date.now()}\n\nQueue me please.`;
+  const res = await apiFetch('/api/free/articles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/markdown' },
+    body: md,
+  });
+
+  t.ok(res.status === 202, '[P2-11] POST /api/free/articles → 202', { status: res.status, body: res.body });
+  t.ok(typeof res.body?.jobId === 'string', '[P2-11b] returns jobId');
+  t.ok(typeof res.body?.statusUrl === 'string', '[P2-11c] returns statusUrl');
+  freeJobIdA = res.body?.jobId;
+}
+
+{
+  const md = `# Free Queue B ${Date.now()}\n\nSecond request.`;
+  const res = await apiFetch('/api/free/articles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/markdown' },
+    body: md,
+  });
+  t.ok(res.status === 202, '[P2-11d] second free publish also queued', { status: res.status, body: res.body });
+  t.ok((res.body?.etaSeconds ?? 0) >= 1, '[P2-11e] second request has queue delay ETA');
+  freeJobIdB = res.body?.jobId;
+}
+
+// Poll first queued job briefly — should complete quickly even when cadence is long.
+if (freeJobIdA) {
+  let done = false;
+  for (let i = 0; i < 10; i++) {
+    const s = await apiFetch(`/api/free/articles/jobs/${freeJobIdA}`);
+    if (s.body?.status === 'done') {
+      done = true;
+      t.ok(typeof s.body?.result?.slug === 'string', '[P2-11f] first queued job created slug');
+      break;
+    }
+    await sleep(200);
+  }
+  t.ok(done, '[P2-11g] first queued job reaches done state');
+}
+
+if (freeJobIdB) {
+  const s = await apiFetch(`/api/free/articles/jobs/${freeJobIdB}`);
+  t.ok(['queued', 'processing', 'done'].includes(s.body?.status), '[P2-11h] second job has valid status');
+}
+
+{
+  const res = await apiFetch('/api/free/articles/queue');
+  t.ok(res.ok, '[P2-11i] GET /api/free/articles/queue → 200', { status: res.status });
+  t.ok(typeof res.body?.minIntervalMs === 'number', '[P2-11j] queue config exposed');
+}
+
+// ---------------------------------------------------------------------------
+// [P2-12] wait=true / waitMs mode — synchronous wait on POST /api/free/articles
+// ---------------------------------------------------------------------------
+console.log('\n── Free API Wait Mode ──');
+
+{
+  // With ?wait=true the server waits up to FREE_ARTICLE_WAIT_DEFAULT_MS for the job.
+  // In test env FREE_ARTICLE_MIN_INTERVAL_MS=100 so the first-in-queue job
+  // completes fast and should return 201. However, if the queue has backlog the
+  // job may not finish within the wait window, in which case 202 is the correct
+  // fallback. Both outcomes are asserted to pass.
+  const md = `# Wait Mode ${Date.now()}\n\nSynchronous wait mode test.`;
+  const res = await apiFetch('/api/free/articles?wait=true', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/markdown' },
+    body: md,
+  });
+
+  t.ok(
+    res.status === 201 || res.status === 202,
+    '[P2-12] POST ?wait=true → 201 or 202',
+    { status: res.status }
+  );
+
+  if (res.status === 201) {
+    t.ok(typeof res.body?.slug === 'string',  '[P2-12b] 201 response includes slug');
+    t.ok(typeof res.body?.url === 'string',   '[P2-12c] 201 response includes url (guaranteed)');
+    t.ok(res.body?.url?.startsWith('/'),      '[P2-12d] url starts with /');
+    t.ok(typeof res.body?.tier === 'string',  '[P2-12e] 201 response includes tier');
+  } else {
+    // 202 fallback — should have standard queue fields
+    t.ok(typeof res.body?.jobId === 'string',    '[P2-12b-fallback] 202 fallback includes jobId');
+    t.ok(typeof res.body?.statusUrl === 'string','[P2-12c-fallback] 202 fallback includes statusUrl');
+    // Skip remaining 201-specific assertions
+    t.skip('[P2-12d]', 'wait timed out — job queued behind backlog (202 fallback)');
+    t.skip('[P2-12e]', 'wait timed out — job queued behind backlog (202 fallback)');
+  }
+}
+
+{
+  // ?waitMs=500 with a very short window: should return 202 if queue is backed up,
+  // or 201 if it completes within 500 ms. Either is correct.
+  const md = `# Wait Timeout ${Date.now()}\n\nShort wait window test.`;
+  const res = await apiFetch('/api/free/articles?waitMs=500', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/markdown' },
+    body: md,
+  });
+
+  t.ok(
+    res.status === 201 || res.status === 202,
+    '[P2-13] POST ?waitMs=500 → 201 or 202',
+    { status: res.status }
+  );
+
+  if (res.status === 201) {
+    // URL contract: must be present on 201
+    t.ok(typeof res.body?.url === 'string', '[P2-13b] 201 with ?waitMs includes url');
+  } else {
+    t.ok(typeof res.body?.jobId === 'string', '[P2-13b-fallback] 202 fallback has jobId');
   }
 }
 

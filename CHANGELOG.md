@@ -6,6 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — free API queue + wait mode
+
+### Added
+
+- `POST /api/free/articles` — queue-backed free article creation endpoint (accepts raw `text/markdown` uploads or JSON `{ markdown }`)
+- `lib/free-article-queue.js` — global queue with configurable cadence (`FREE_ARTICLE_MIN_INTERVAL_MS`, default 60s)
+- `GET /api/free/articles/jobs/:jobId` — queue job status polling endpoint
+- `GET /api/free/articles/queue` — queue health/capacity endpoint
+- **Synchronous wait mode** on `POST /api/free/articles`:
+  - `?wait=true` — hold connection up to `FREE_ARTICLE_WAIT_DEFAULT_MS` (default 30 000 ms)
+  - `?waitMs=<ms>` — custom wait window (max 120 000 ms)
+  - Returns `201 Created` with full article payload (including guaranteed `url`) on completion
+  - Falls back to `202 Accepted` queue response when job doesn't complete within window
+- `FREE_ARTICLE_WAIT_DEFAULT_MS` env variable (default: 30 000 ms)
+- `waitForFreeArticleJob()` in `lib/free-article-queue.js` — efficient polling helper used internally by wait mode
+- `FREE_ARTICLE_QUEUE_*` env docs and examples (`ENV.md`, `.env.example`)
+- Integration coverage for queue behavior and wait mode in `tests/integration/api-phase2.test.js` (P2-11, P2-12, P2-13)
+
+### Changed
+
+- Refactored publish logic into shared `publishMarkdownArticle()` so `/api/publish` and queued free API use the same validation/write flow
+- `GET /api/internal/config` now includes `freeQueue` runtime stats
+- Integration test server starts with `FREE_ARTICLE_MIN_INTERVAL_MS=100` so queue tests complete in milliseconds (overridable via env)
+
+---
+
 ## [1.1.0-rc1] — 2026-02-19 — Phase 2 Release Candidate
 
 ### Added (Day 10 — RC prep + release prep)

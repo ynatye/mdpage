@@ -56,7 +56,15 @@ function startServer() {
     process.execPath,
     [path.join(ROOT, 'server.js')],
     {
-      env:   { ...process.env, PORT, NODE_ENV: 'test', LOG_LEVEL: 'error' },
+      env: {
+        ...process.env,
+        PORT,
+        NODE_ENV: 'test',
+        LOG_LEVEL: 'error',
+        // Use a short queue interval so integration tests don't need to wait
+        // the default 60 s cadence between free article publishes.
+        FREE_ARTICLE_MIN_INTERVAL_MS: process.env.FREE_ARTICLE_MIN_INTERVAL_MS ?? '100',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd:   ROOT,
     }

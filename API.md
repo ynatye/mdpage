@@ -68,6 +68,105 @@ Free posts **always** get a random suffix — the `slug` field in the request is
 
 ---
 
+## POST /api/free/articles
+
+Queue-backed public endpoint for creating **free-tier** articles from markdown.
+
+Supports:
+- `Content-Type: text/markdown` (recommended for raw `.md` uploads)
+- `Content-Type: application/json` with `{ "markdown": "..." }`
+
+The request is always queued. A global cadence enforces one create every
+`FREE_ARTICLE_MIN_INTERVAL_MS` (default: 60,000ms).
+
+### Query parameters
+
+| Parameter | Type | Default | Notes |
+|---|---|---|---|
+| `wait` | `true` / `1` | — | Hold connection up to `FREE_ARTICLE_WAIT_DEFAULT_MS` (30 s). Returns 201 on completion, 202 on timeout. |
+| `waitMs` | integer (ms) | — | Custom wait window. Takes precedence over `?wait=true`. Max 120 000 ms. |
+
+### Response (202 Accepted — default / timeout fallback)
+
+```json
+{
+  "accepted": true,
+  "jobId": "freejob_1771470000000_ab12cd",
+  "status": "queued",
+  "position": 2,
+  "etaSeconds": 60,
+  "scheduledAt": "2026-02-19T03:30:00.000Z",
+  "statusUrl": "/api/free/articles/jobs/freejob_1771470000000_ab12cd"
+}
+```
+
+### Response (201 Created — wait mode, job completed within window)
+
+Same payload shape as `POST /api/publish`. The `url` field is **guaranteed** to be present.
+
+```json
+{
+  "success":   true,
+  "slug":      "my-title-ab3j7x2q",
+  "slugBase":  "my-title",
+  "url":       "/my-title-ab3j7x2q",
+  "tier":      "free",
+  "adEnabled": true,
+  "status":    "published",
+  "createdAt": "2026-02-19T05:00:00.000Z"
+}
+```
+
+### Error responses
+
+| Status | `error` key | Meaning |
+|---|---|---|
+| 400 | `"Markdown content is required"` | Missing/empty markdown |
+| 429 | `"Free article queue is full..."` | Queue capacity hit |
+| 500 | `"Article creation failed"` | Job failed during wait window |
+
+---
+
+## GET /api/free/articles/jobs/:jobId
+
+Poll a queued free publish job.
+
+### Response (200 OK)
+
+```json
+{
+  "id": "freejob_1771470000000_ab12cd",
+  "status": "queued",
+  "queuedAt": "2026-02-19T03:29:00.000Z",
+  "scheduledAt": "2026-02-19T03:30:00.000Z",
+  "startedAt": null,
+  "finishedAt": null,
+  "etaSeconds": 43
+}
+```
+
+When `status="done"`, `result` includes the same payload shape as `POST /api/publish`.
+
+---
+
+## GET /api/free/articles/queue
+
+Returns lightweight queue state and configured global cadence.
+
+### Response (200 OK)
+
+```json
+{
+  "minIntervalMs": 60000,
+  "maxQueueSize": 200,
+  "queued": 1,
+  "processing": true,
+  "nextSlotAt": "2026-02-19T03:31:00.000Z"
+}
+```
+
+---
+
 ## GET /api/articles/:slug
 
 Fetch a published article with metadata.

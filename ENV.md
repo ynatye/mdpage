@@ -348,6 +348,44 @@ Maximum entries in the in-memory abuse event ring buffer (visible at `GET /api/i
 
 ---
 
+## Free Article Queue (Global)
+
+### `FREE_ARTICLE_MIN_INTERVAL_MS`
+
+- Default: `60000`
+- Type: integer (ms)
+
+Global publish cadence for `POST /api/free/articles`.
+At default value, the system creates at most 1 free article per minute globally.
+
+### `FREE_ARTICLE_QUEUE_MAX`
+
+- Default: `200`
+- Type: integer
+
+Maximum number of queued free article jobs before enqueue returns 429.
+
+### `FREE_ARTICLE_JOB_TTL_MS`
+
+- Default: `21600000` (6h)
+- Type: integer (ms)
+
+How long completed/failed queue jobs remain queryable via
+`GET /api/free/articles/jobs/:jobId` before in-memory cleanup.
+
+### `FREE_ARTICLE_WAIT_DEFAULT_MS`
+
+- Default: `30000` (30 s)
+- Type: integer (ms)
+
+Maximum time the server holds a connection open when the client passes
+`?wait=true` to `POST /api/free/articles`. After this window the server
+falls back to a `202 Accepted` queue response even if the job is still pending.
+
+Cap enforced by the server: `waitMs` query param cannot exceed 120 000 ms.
+
+---
+
 ## Example `.env`
 
 ```dotenv
@@ -389,6 +427,11 @@ INTERNAL_DASHBOARD_TOKEN=
 # ABUSE_BURST_WIN=5
 # ABUSE_SCORE_LIMIT=2
 # ABUSE_SCORE_BLOCK=3
+
+# Free queue API (global throttle)
+# FREE_ARTICLE_MIN_INTERVAL_MS=60000
+# FREE_ARTICLE_QUEUE_MAX=200
+# FREE_ARTICLE_JOB_TTL_MS=21600000
 ```
 
 Never commit your real `.env` file.

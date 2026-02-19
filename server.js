@@ -54,6 +54,12 @@ import {
   abuseConfig,
 } from './lib/abuse.js';
 import { checkDataStore } from './lib/healthz.js';
+import {
+  enqueueFreeArticle,
+  getFreeArticleJob,
+  waitForFreeArticleJob,
+  freeArticleQueueStats,
+} from './lib/free-article-queue.js';
 import log from './lib/logger.js';
 import {
   apiInternalAuth,
@@ -219,6 +225,123 @@ async function isSlugAvailable(slug) {
   return !Object.prototype.hasOwnProperty.call(index, slug);
 }
 
+async function publishMarkdownArticle({ markdown, tier = 'free', customSlug }) {
+  if (!markdown || typeof markdown !== 'string' || !markdown.trim()) {
+    const err = new Error('Markdown content is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (markdown.trim().length > 1024 * 1024) {
+    const err = new Error('Markdown content too large (max 1MB)');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const resolvedTier = tier === 'paid' ? 'paid' : 'free';
+  const title = extractTitle(markdown);
+
+  if (!title || title === 'Untitled') {
+    const err = new Error('Article must have a title (first line: "# Your Title")');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const rawBase = resolvedTier === 'paid' && customSlug?.trim() ? customSlug.trim() : title;
+  const slugBase = normalizeSlugBase(rawBase);
+
+  if (!slugBase) {
+    const err = new Error('Could not derive a valid slug from the title');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let slug;
+  try {
+    slug = await resolveSlug(resolvedTier, slugBase, isSlugAvailable);
+  } catch (err) {
+    if (err.code === 'SLUG_CONFLICT') {
+      const e = new Error(`Slug "${err.slug}" is already taken. Choose a different title or slug.`);
+      e.statusCode = 409;
+      throw e;
+    }
+    if (err.code === 'SLUG_EXHAUSTED') {
+      const e = new Error('Could not generate a unique slug. Please retry.');
+      e.statusCode = 500;
+      throw e;
+    }
+    throw err;
+  }
+
+  const description = extractDescription(markdown);
+  const readingTime = estimateReadingTime(markdown);
+  const adEnabled = resolvedTier === 'free';
+
+  const articlePath = path.join('./data/articles', `${slug}.md`);
+  await fs.writeFile(articlePath, markdown, 'utf8');
+
+  let isUpdate;
+  let createdAt;
+  let updatedAt;
+
+  await withIndexLock(async () => {
+    const index = await loadIndex();
+    isUpdate = !!index[slug];
+    createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
+    updatedAt = isUpdate ? new Date().toISOString() : undefined;
+
+    const existingBilling = isUpdate ? {
+      billingStatus:     index[slug].billingStatus     ?? undefined,
+      checkoutSessionId: index[slug].checkoutSessionId ?? undefined,
+      subscriptionId:    index[slug].subscriptionId    ?? undefined,
+      customerId:        index[slug].customerId        ?? undefined,
+      planActivatedAt:   index[slug].planActivatedAt   ?? undefined,
+      planExpiresAt:     index[slug].planExpiresAt     ?? undefined,
+      billingProvider:   index[slug].billingProvider   ?? undefined,
+    } : defaultBillingMeta(resolvedTier);
+
+    index[slug] = {
+      slug,
+      slugBase,
+      title,
+      tier: resolvedTier,
+      adEnabled,
+      status: isUpdate ? (index[slug].status ?? 'published') : 'published',
+      createdAt,
+      ...(updatedAt && { updatedAt }),
+      description,
+      readingTime,
+      last30dUniqueViews: isUpdate ? (index[slug].last30dUniqueViews ?? 0) : 0,
+      totalViews: isUpdate ? (index[slug].totalViews ?? 0) : 0,
+      atRiskStartedAt: isUpdate ? (index[slug].atRiskStartedAt ?? null) : null,
+      expiresAt:       isUpdate ? (index[slug].expiresAt       ?? null) : null,
+      ...existingBilling,
+    };
+
+    await saveIndex(index);
+  });
+
+  log.info('publish', {
+    slug,
+    slugBase,
+    tier: resolvedTier,
+    adEnabled,
+    isUpdate,
+    title,
+  });
+
+  return {
+    success: true,
+    slug,
+    slugBase,
+    url: `/${slug}`,
+    tier: resolvedTier,
+    adEnabled,
+    status: 'published',
+    createdAt,
+    ...(updatedAt && { updatedAt }),
+  };
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 /**
@@ -253,127 +376,16 @@ app.post(
   async (req, res) => {
     try {
       const { markdown, slug: customSlug, tier: rawTier = 'free' } = req.body;
-
-      // ── Input validation ────────────────────────────────────────────────
-      if (!markdown || typeof markdown !== 'string' || !markdown.trim()) {
-        return res.status(400).json({ error: 'Markdown content is required' });
-      }
-      if (markdown.trim().length > 1024 * 1024) {
-        return res.status(400).json({ error: 'Markdown content too large (max 1MB)' });
-      }
-
-      const tier = rawTier === 'paid' ? 'paid' : 'free';
-
-      const title = extractTitle(markdown);
-      if (!title || title === 'Untitled') {
-        return res.status(400).json({
-          error: 'Article must have a title (first line: "# Your Title")',
-        });
-      }
-
-      // ── Slug generation ──────────────────────────────────────────────────
-      // For paid: use custom slug or derive from title (no suffix)
-      // For free: always derive from title + random suffix (custom input ignored)
-      const rawBase = tier === 'paid' && customSlug?.trim()
-        ? customSlug.trim()
-        : title;
-
-      const slugBase = normalizeSlugBase(rawBase);
-      if (!slugBase) {
-        return res.status(400).json({ error: 'Could not derive a valid slug from the title' });
-      }
-
-      let slug;
-      try {
-        slug = await resolveSlug(tier, slugBase, isSlugAvailable);
-      } catch (err) {
-        if (err.code === 'SLUG_CONFLICT') {
-          return res.status(409).json({
-            error: `Slug "${err.slug}" is already taken. Choose a different title or slug.`,
-          });
-        }
-        if (err.code === 'SLUG_EXHAUSTED') {
-          return res.status(500).json({ error: 'Could not generate a unique slug. Please retry.' });
-        }
-        throw err;
-      }
-
-      // ── Pre-compute metadata ─────────────────────────────────────────────
-      const description  = extractDescription(markdown);
-      const readingTime  = estimateReadingTime(markdown);
-      const adEnabled    = tier === 'free';
-
-      // ── Write article file (outside lock) ────────────────────────────────
-      const articlePath = path.join('./data/articles', `${slug}.md`);
-      await fs.writeFile(articlePath, markdown, 'utf8');
-
-      // ── Update index under mutex ─────────────────────────────────────────
-      let isUpdate;
-      let createdAt;
-      let updatedAt;
-
-      await withIndexLock(async () => {
-        const index = await loadIndex();
-        isUpdate  = !!index[slug];
-        createdAt = isUpdate ? index[slug].createdAt : new Date().toISOString();
-        updatedAt = isUpdate ? new Date().toISOString() : undefined;
-
-        // Preserve existing billing metadata on updates; initialise defaults on create.
-        const existingBilling = isUpdate ? {
-          billingStatus:     index[slug].billingStatus     ?? undefined,
-          checkoutSessionId: index[slug].checkoutSessionId ?? undefined,
-          subscriptionId:    index[slug].subscriptionId    ?? undefined,
-          customerId:        index[slug].customerId        ?? undefined,
-          planActivatedAt:   index[slug].planActivatedAt   ?? undefined,
-          planExpiresAt:     index[slug].planExpiresAt     ?? undefined,
-          billingProvider:   index[slug].billingProvider   ?? undefined,
-        } : defaultBillingMeta(tier);
-
-        index[slug] = {
-          slug,
-          slugBase,
-          title,
-          tier,
-          adEnabled,
-          status: isUpdate ? (index[slug].status ?? 'published') : 'published',
-          createdAt,
-          ...(updatedAt && { updatedAt }),
-          description,
-          readingTime,
-          last30dUniqueViews: isUpdate ? (index[slug].last30dUniqueViews ?? 0) : 0,
-          totalViews: isUpdate ? (index[slug].totalViews ?? 0) : 0,
-          atRiskStartedAt: isUpdate ? (index[slug].atRiskStartedAt ?? null) : null,
-          expiresAt:       isUpdate ? (index[slug].expiresAt       ?? null) : null,
-          ...existingBilling,
-        };
-
-        await saveIndex(index);
+      const payload = await publishMarkdownArticle({
+        markdown,
+        tier: rawTier,
+        customSlug,
       });
-
-      log.info('publish', {
-        slug,
-        slugBase,
-        tier,
-        adEnabled,
-        isUpdate,
-        title,
-      });
-
-      return res.status(201).json({
-        success:   true,
-        slug,
-        slugBase,
-        url:       `/${slug}`,
-        tier,
-        adEnabled,
-        status:    'published',
-        createdAt,
-        ...(updatedAt && { updatedAt }),
-      });
-
+      return res.status(201).json(payload);
     } catch (err) {
       log.error('publish.error', { error: err.message, stack: err.stack });
 
+      if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
       if (err.code === 'ENOSPC') return res.status(507).json({ error: 'Server storage full' });
       if (err.code === 'EACCES') return res.status(500).json({ error: 'Server permission error' });
 
@@ -410,6 +422,127 @@ app.post(
  *
  * Expired posts return 410 Gone.
  */
+/**
+ * POST /api/free/articles
+ *
+ * Public queue-backed free publish endpoint.
+ *
+ * Accepts either:
+ *   - text/markdown body (raw .md upload)
+ *   - application/json body with { markdown[, waitMs] }
+ *
+ * A global queue enforces one free publish every FREE_ARTICLE_MIN_INTERVAL_MS
+ * (default: 60000 ms).
+ *
+ * Optional synchronous-wait mode (avoids polling):
+ *   - Query params: ?wait=true  or  ?waitMs=<ms>
+ *   - JSON body:    { waitMs: <ms> }
+ *   - ?wait=true uses a default window of FREE_ARTICLE_WAIT_DEFAULT_MS (30 000 ms)
+ *
+ * Response:
+ *   202 Accepted — job was queued (default or when wait window expires)
+ *   201 Created  — job completed within wait window; body includes full article
+ *                  payload with guaranteed `url` field
+ *   500 Internal — job failed within wait window
+ *   429 Too Many Requests — queue full
+ */
+app.post('/api/free/articles', express.text({ type: ['text/markdown', 'text/plain'], limit: '1mb' }), async (req, res) => {
+  try {
+    const markdown = typeof req.body === 'string' ? req.body : req.body?.markdown;
+
+    if (!markdown || typeof markdown !== 'string' || !markdown.trim()) {
+      return res.status(400).json({ error: 'Markdown content is required' });
+    }
+
+    // ── Wait-mode resolution ──────────────────────────────────────────────────
+    // Priority: ?waitMs > ?wait > body.waitMs > no-wait
+    const DEFAULT_WAIT_MS = Number(process.env.FREE_ARTICLE_WAIT_DEFAULT_MS ?? 30_000);
+    let waitMs = 0;
+
+    if (req.query.waitMs !== undefined) {
+      const parsed = Number(req.query.waitMs);
+      waitMs = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 120_000) : DEFAULT_WAIT_MS;
+    } else if (req.query.wait === 'true' || req.query.wait === '1') {
+      waitMs = DEFAULT_WAIT_MS;
+    } else if (req.body?.waitMs !== undefined && typeof req.body === 'object') {
+      const parsed = Number(req.body.waitMs);
+      waitMs = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 120_000) : DEFAULT_WAIT_MS;
+    }
+
+    const queued = enqueueFreeArticle(async () => publishMarkdownArticle({ markdown, tier: 'free' }));
+
+    const queuedPayload = {
+      accepted: true,
+      jobId: queued.jobId,
+      status: 'queued',
+      position: queued.position,
+      etaSeconds: queued.etaSeconds,
+      scheduledAt: queued.scheduledAt,
+      statusUrl: `/api/free/articles/jobs/${queued.jobId}`,
+    };
+
+    // ── Synchronous wait path ─────────────────────────────────────────────────
+    if (waitMs > 0) {
+      const settled = await waitForFreeArticleJob(queued.jobId, { maxMs: waitMs });
+
+      if (settled?.status === 'done') {
+        // URL is guaranteed on successful publish; add it explicitly if missing
+        const result = settled.result ?? {};
+        const url = result.url ?? (result.slug ? `/${result.slug}` : undefined);
+        return res.status(201).json({ ...result, url });
+      }
+
+      if (settled?.status === 'failed') {
+        log.error('free.publish.wait.failed', { jobId: queued.jobId, error: settled.error });
+        return res.status(500).json({
+          error: settled.error ?? 'Article creation failed',
+          jobId: queued.jobId,
+        });
+      }
+
+      // Timed out or still in-flight — fall through to 202
+    }
+
+    return res.status(202).json(queuedPayload);
+
+  } catch (err) {
+    if (err.code === 'QUEUE_FULL') {
+      return res.status(429).json({
+        error: err.message,
+        retryAfterSeconds: Math.ceil(freeArticleQueueStats().minIntervalMs / 1000),
+      });
+    }
+
+    log.error('free.publish.enqueue.error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to enqueue free article request' });
+  }
+});
+
+/**
+ * GET /api/free/articles/jobs/:jobId
+ *
+ * Poll queue job status.
+ */
+app.get('/api/free/articles/jobs/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = getFreeArticleJob(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  return res.json(job);
+});
+
+/**
+ * GET /api/free/articles/queue
+ *
+ * Lightweight visibility into global free queue state.
+ */
+app.get('/api/free/articles/queue', (_req, res) => {
+  return res.json(freeArticleQueueStats());
+});
+
 app.get('/api/articles/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
@@ -728,6 +861,7 @@ app.get('/api/internal/config', apiInternalAuth(), (_req, res) => {
   return res.json({
     lifecycle:     lifecycleConfig,
     rateLimit:     rateLimitConfig,
+    freeQueue:     freeArticleQueueStats(),
     env:           process.env.NODE_ENV ?? 'development',
     sweepInFlight: _sweepInFlight,
   });

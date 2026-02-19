@@ -6,7 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — feat/phase2-day2-auth-dashboard
+## [Unreleased] — Phase 2
+
+### Added (Day 5 — lifecycle UX consistency)
+
+- `lib/lifecycle-ux.js` — pure UX-metadata helpers:
+  - `urgencyLevel(daysLeft)` — maps days remaining to `critical/high/medium/low`
+  - `computeDaysLeft(expiresAt, now)` — ceiling-rounded days, injectable `now` for tests
+  - `daysLeftText(daysLeft)` — human copy (`"today"`, `"in 1 day"`, `"in N days"`, `"soon"`)
+  - `statusLabel(status)` — `"Published"`, `"At Risk"`, `"Expired"`, `"Unknown"`
+  - `buildLifecycleUx(meta, now)` — builds complete `lifecycleUx` object from index record
+- `GET /api/articles/:slug` — response now includes `lifecycleUx` field (precomputed urgency, countdown, label)
+- `GET /api/articles/:slug` — 410 expired response now includes `title` so clients can render `"<Title> Has Expired"` without a second request
+- `GET /api/articles/:slug/status` — new lightweight status-only endpoint (no content rendering); returns `{ slug, status, tier, lifecycleUx }`; also 410+lifecycleUx for expired posts
+- `src/components/AtRiskBanner.jsx` — urgency-aware colour palette (`critical`=red, `high`=orange, `medium`=amber, `low`=amber-light); accepts `daysLeft`, `daysLeftText`, `urgency` props from `lifecycleUx`; falls back to client-side calculation for backwards compatibility
+- `src/components/LifecycleStatusBar.jsx` — new subtle footer strip showing tier + lifecycle status for free posts; shows soft "Upgrade →" link for at-risk posts
+- `src/pages/Article.jsx` — passes `lifecycleUx` props to `AtRiskBanner`; renders `LifecycleStatusBar` in article footer
+- `tests/unit/lifecycle-ux.test.js` — 34 new unit tests across LUX-01..LUX-05
+
+### Changed
+- `API.md` — documented `lifecycleUx` response field, new `/status` endpoint, enriched 410 shape
+- `package.json` — `test:unit` includes `lifecycle-ux.test.js`
+- Unit test count: 127 → 161
+
+---
+
+## [Unreleased (Day 1–4)] — feat/phase2-day2-auth-dashboard
 
 ### Added (Day 2 — auth hardening + dashboard polish)
 

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import AdSlot from '@/components/AdSlot'
 import AtRiskBanner from '@/components/AtRiskBanner'
+import LifecycleStatusBar from '@/components/LifecycleStatusBar'
 
 // ── Visitor identity ────────────────────────────────────────────────────────
 // We store a stable UUID in localStorage so the server can deduplicate views
@@ -306,6 +307,9 @@ export default function Article() {
         {atRisk && (
           <AtRiskBanner
             expiresAt={article.meta.expiresAt}
+            daysLeft={article.lifecycleUx?.daysLeft}
+            daysLeftText={article.lifecycleUx?.daysLeftText}
+            urgency={article.lifecycleUx?.urgency}
             upgradeHref="/"
           />
         )}
@@ -354,7 +358,14 @@ export default function Article() {
         {/* ── Issue #5: Footer ad slot (free posts only) ───────────────────── */}
         {showAds && <AdSlot variant="banner" label="Advertisement" />}
 
-        <footer className="mt-16 pt-8 border-t border-border">
+        <footer className="mt-16 pt-8 border-t border-border space-y-4">
+          {/* Lifecycle status bar — only for free posts */}
+          <LifecycleStatusBar
+            tier={article.meta.tier}
+            status={article.meta.status}
+            lifecycleUx={article.lifecycleUx}
+            upgradeHref="/"
+          />
           <div className="text-center">
             <a
               href="/"

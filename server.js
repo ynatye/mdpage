@@ -1,9 +1,10 @@
 /**
- * server.js — mdpage Express server (Phase 1)
+ * server.js — mdpage Express server
  *
  * API surface:
  *   POST /api/publish                        — publish a new article
  *   GET  /api/articles/:slug                 — read article + metadata
+ *   GET  /api/articles/:slug/status          — lightweight lifecycle status check
  *   POST /api/articles/:slug/view            — record a view (deduped daily)
  *   GET  /api/internal/lifecycle/:slug       — inspect lifecycle state (debug)
  *   POST /api/internal/lifecycle/run         — trigger a lifecycle sweep (debug)
@@ -28,6 +29,7 @@ import { recordView, getUniqueViewCount, getViewData } from './lib/views.js';
 import { runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
 import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
 import { computeInternalStats } from './lib/stats.js';
+import { buildLifecycleUx } from './lib/lifecycle-ux.js';
 import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
@@ -387,12 +389,14 @@ app.get('/api/articles/:slug', async (req, res) => {
       return res.status(404).json({ error: 'Article not found' });
     }
 
-    // Expired posts are no longer publicly served
+    // Expired posts are no longer publicly served — include title so clients
+    // can render a meaningful "Expired: <title>" page without a second request.
     if (article.status === 'expired') {
       return res.status(410).json({
         error: 'This article has expired and is no longer available.',
         status: 'expired',
         slug,
+        title:  article.title ?? null,
       });
     }
 
@@ -406,6 +410,7 @@ app.get('/api/articles/:slug', async (req, res) => {
     }
 
     const content = renderContent(markdown);
+    const lux = buildLifecycleUx(article);
 
     return res.json({
       title:   article.title,
@@ -424,11 +429,72 @@ app.get('/api/articles/:slug', async (req, res) => {
         expiresAt:          article.expiresAt    ?? null,
         atRiskStartedAt:    article.atRiskStartedAt ?? null,
       },
+      // Precomputed lifecycle UX fields — use these in frontend components
+      // instead of computing urgency/countdown client-side.
+      lifecycleUx: lux,
     });
 
   } catch (err) {
     log.error('article.get.error', { error: err.message });
     return res.status(500).json({ error: 'Error loading article' });
+  }
+});
+
+/**
+ * GET /api/articles/:slug/status
+ *
+ * Lightweight lifecycle status check — returns only the lifecycle fields
+ * without reading or rendering the full article content.
+ * Useful for polling at-risk countdowns or showing status badges without
+ * incurring the cost of a full GET /api/articles/:slug.
+ *
+ * Response (200 OK):
+ * {
+ *   slug:         string,
+ *   status:       "published" | "at_risk" | "expired",
+ *   tier:         "free" | "paid",
+ *   lifecycleUx:  { status, statusLabel, daysLeft, daysLeftText, urgency, expiresAt }
+ * }
+ *
+ * 404 when slug unknown; 410 with lifecycleUx when expired (consistent with GET /:slug).
+ */
+app.get('/api/articles/:slug/status', async (req, res) => {
+  try {
+    const { slug } = req.params;
+
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    const index   = await loadIndex();
+    const article = index[slug];
+
+    if (!article) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    const lux = buildLifecycleUx(article);
+
+    if (article.status === 'expired') {
+      return res.status(410).json({
+        slug,
+        status: 'expired',
+        tier:   article.tier ?? 'free',
+        title:  article.title ?? null,
+        lifecycleUx: lux,
+      });
+    }
+
+    return res.json({
+      slug,
+      status: article.status ?? 'published',
+      tier:   article.tier   ?? 'free',
+      lifecycleUx: lux,
+    });
+
+  } catch (err) {
+    log.error('article.status.error', { error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

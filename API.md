@@ -1,7 +1,7 @@
-# mdpage API Reference — Phase 1
+# mdpage API Reference — Phase 2
 
 > **Backend contract document** — stable shapes for frontend consumption.
-> Last updated: 2026-02-18
+> Last updated: 2026-02-19
 
 ---
 
@@ -91,18 +91,39 @@ Fetch a published article with metadata.
     "last30dUniqueViews": 42,
     "expiresAt":          null,
     "atRiskStartedAt":    null
+  },
+  "lifecycleUx": {
+    "status":       "published",
+    "statusLabel":  "Published",
+    "daysLeft":     null,
+    "daysLeftText": "soon",
+    "urgency":      "low",
+    "expiresAt":    null
   }
 }
 ```
 
 > `content` is the rendered article body **with the H1 stripped** (the frontend renders the title separately).
+>
+> `lifecycleUx` is a precomputed UX object — consume these fields in frontend components rather than recomputing from raw `meta` fields.
+
+### lifecycleUx fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `status` | string | Same as `meta.status` |
+| `statusLabel` | string | Human-readable: `"Published"`, `"At Risk"`, `"Expired"` |
+| `daysLeft` | number\|null | Days until expiry for `at_risk` posts; `null` otherwise |
+| `daysLeftText` | string | Human copy: `"today"`, `"in 1 day"`, `"in 5 days"`, `"soon"` |
+| `urgency` | string | `"critical"` (0d) \| `"high"` (1-2d) \| `"medium"` (3-5d) \| `"low"` (6d+) |
+| `expiresAt` | string\|null | ISO-8601 expiry, or null |
 
 ### Status-specific behaviour
 
 | `meta.status` | HTTP | Notes |
 |---|---|---|
 | `"published"` | 200 | Normal response |
-| `"at_risk"`   | 200 | Include warning banner: "expires in X days" |
+| `"at_risk"`   | 200 | Include warning banner; use `lifecycleUx` for urgency level |
 | `"expired"`   | 410 | Article is gone; see expired response below |
 
 ### Expired response (410 Gone)
@@ -111,21 +132,49 @@ Fetch a published article with metadata.
 {
   "error":  "This article has expired and is no longer available.",
   "status": "expired",
-  "slug":   "my-post-ab3j7x2q"
+  "slug":   "my-post-ab3j7x2q",
+  "title":  "My Post Title"
 }
 ```
 
-### At-risk banner data
-
-When `meta.status === "at_risk"`:
-- `meta.expiresAt` — ISO date the post will expire (7 days from `atRiskStartedAt`)
-- Compute days remaining: `Math.ceil((new Date(meta.expiresAt) - Date.now()) / 86400000)`
-- Banner copy: `"This post will expire in {N} days unless traffic increases or it is upgraded to paid."`
+> `title` is included in the 410 response so the expired-page UI can render `"My Post Title has expired"` without a separate lookup.
 
 ### Ad rendering
 
 - Render ad slots **only** when `meta.adEnabled === true`
 - Never render ads when `meta.tier === "paid"` or `meta.adEnabled === false`
+
+---
+
+## GET /api/articles/:slug/status
+
+Lightweight lifecycle status check — returns only lifecycle fields, no content rendering.
+Useful for polling at-risk countdowns or rendering status badges.
+
+### Response (200 OK)
+
+```json
+{
+  "slug":         "my-post-ab3j7x2q",
+  "status":       "at_risk",
+  "tier":         "free",
+  "lifecycleUx":  {
+    "status":       "at_risk",
+    "statusLabel":  "At Risk",
+    "daysLeft":     3,
+    "daysLeftText": "in 3 days",
+    "urgency":      "medium",
+    "expiresAt":    "2026-02-25T00:00:00.000Z"
+  }
+}
+```
+
+### Error responses
+
+| Status | Meaning |
+|---|---|
+| 404 | Slug not found |
+| 410 | Expired — body includes `title` and `lifecycleUx` |
 
 ---
 

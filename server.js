@@ -28,6 +28,7 @@ import { recordView, getUniqueViewCount, getViewData } from './lib/views.js';
 import { runLifecycleSweep, config as lifecycleConfig } from './lib/lifecycle.js';
 import { publishRateLimit, viewRateLimit, honeypot, rateLimitConfig } from './lib/ratelimit.js';
 import { computeInternalStats } from './lib/stats.js';
+import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
   apiInternalAuth,
@@ -78,6 +79,20 @@ async function ensureDataDirs() {
   try { await fs.access('./data/lifecycle-runs.json'); } catch {
     await fs.writeFile('./data/lifecycle-runs.json', '[]');
   }
+
+  // ── Startup integrity check ───────────────────────────────────────────────
+  // Warn (but do not crash) if index.json is not valid JSON.
+  // A corrupt index would silently fall back to {} in loadIndex(), masking data
+  // loss; surfacing it at boot makes the problem visible before any requests land.
+  try {
+    const raw = await fs.readFile('./data/index.json', 'utf8');
+    JSON.parse(raw);
+  } catch (err) {
+    log.error('startup.integrity.index', {
+      error: err.message,
+      hint:  'data/index.json may be corrupt — restore from backup before serving traffic',
+    });
+  }
 }
 
 // ── Index helpers ─────────────────────────────────────────────────────────────
@@ -119,6 +134,11 @@ async function withLifecycleRunLock(fn) {
 async function appendLifecycleRun(summary) {
   await withLifecycleRunLock(async () => {
     const runs = await loadLifecycleRuns();
+    // Capture up to 5 error slugs for dashboard inspection (full errors array is
+    // available in server logs; here we only store slugs for quick triage).
+    const errorSlugs = Array.isArray(summary?.errors)
+      ? summary.errors.slice(0, 5).map((e) => (typeof e === 'object' ? (e.slug ?? String(e)) : String(e)))
+      : [];
     runs.push({
       ts: new Date().toISOString(),
       evaluated: Number(summary?.evaluated ?? 0),
@@ -129,7 +149,8 @@ async function appendLifecycleRun(summary) {
         no_change: Number(summary?.transitions?.no_change ?? 0),
         skipped: Number(summary?.transitions?.skipped ?? 0),
       },
-      errors: Array.isArray(summary?.errors) ? summary.errors.length : 0,
+      errors:     Array.isArray(summary?.errors) ? summary.errors.length : 0,
+      errorSlugs, // slugs that failed evaluation (empty array when no errors)
     });
 
     const capped = runs.slice(-500);
@@ -149,6 +170,22 @@ async function withIndexLock(fn) {
   try { return await fn(); }
   finally { release(); }
 }
+
+// ── Lifecycle sweep concurrency guard ─────────────────────────────────────────
+//
+// Prevents two sweep operations from running in parallel — e.g., a manual
+// API trigger arriving while the scheduler is already mid-sweep.
+//
+// Usage:
+//   if (_sweepInFlight) return res.status(409).json({ error: '…' });
+//   _sweepInFlight = true;
+//   try { … } finally { _sweepInFlight = false; }
+//
+// Not a mutex: we deliberately reject concurrent callers rather than queue them,
+// because two parallel sweeps over the same index would produce duplicate
+// transitions and double-increment run-history counters.
+
+let _sweepInFlight = false;
 
 // ── Slug availability check ───────────────────────────────────────────────────
 
@@ -526,6 +563,14 @@ app.get('/api/internal/lifecycle/:slug', apiInternalAuth(), async (req, res) => 
  * }
  */
 app.post('/api/internal/lifecycle/run', apiInternalAuth(), async (req, res) => {
+  if (_sweepInFlight) {
+    log.warn('lifecycle.run.rejected', { reason: 'sweep already in flight' });
+    return res.status(409).json({
+      error: 'A lifecycle sweep is already in progress. Try again in a moment.',
+      sweepInFlight: true,
+    });
+  }
+  _sweepInFlight = true;
   try {
     const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
     await appendLifecycleRun(summary);
@@ -533,6 +578,8 @@ app.post('/api/internal/lifecycle/run', apiInternalAuth(), async (req, res) => {
   } catch (err) {
     log.error('lifecycle.run.error', { error: err.message });
     return res.status(500).json({ error: 'Lifecycle sweep failed', details: err.message });
+  } finally {
+    _sweepInFlight = false;
   }
 });
 
@@ -546,6 +593,17 @@ app.post('/api/internal/lifecycle/run', apiInternalAuth(), async (req, res) => {
  * Response: same shape as /lifecycle/run, plus `dryRun: true`.
  */
 app.post('/api/internal/lifecycle/dry-run', apiInternalAuth(), async (req, res) => {
+  // Dry-runs read the same index snapshot, so running one while a live sweep
+  // is committing changes could produce slightly stale results.  Surface this
+  // so the operator knows to retry after the in-flight sweep finishes.
+  if (_sweepInFlight) {
+    log.warn('lifecycle.dryrun.rejected', { reason: 'sweep already in flight' });
+    return res.status(409).json({
+      error:         'A lifecycle sweep is currently in progress. Dry-run may show stale results — retry shortly.',
+      dryRun:        true,
+      sweepInFlight: true,
+    });
+  }
   try {
     // Pass a no-op saveIndex and a pass-through lock: evaluation runs fully
     // but no writes are committed to data/index.json.
@@ -566,9 +624,10 @@ app.post('/api/internal/lifecycle/dry-run', apiInternalAuth(), async (req, res) 
  */
 app.get('/api/internal/config', apiInternalAuth(), (_req, res) => {
   return res.json({
-    lifecycle: lifecycleConfig,
-    rateLimit: rateLimitConfig,
-    env:       process.env.NODE_ENV ?? 'development',
+    lifecycle:     lifecycleConfig,
+    rateLimit:     rateLimitConfig,
+    env:           process.env.NODE_ENV ?? 'development',
+    sweepInFlight: _sweepInFlight,
   });
 });
 
@@ -867,11 +926,14 @@ ${flashHtml}
 <!-- Actions -->
 <div class="actions">
   <form method="POST" action="/internal/actions/lifecycle-run" style="margin:0" id="lc-run-form" onsubmit="return confirmRun(event)">
-    <button class="btn-run" type="submit" id="btn-run">▶ Run lifecycle sweep</button>
+    <button class="btn-run" type="submit" id="btn-run"${_sweepInFlight ? ' disabled title="A sweep is already running — refresh in a moment"' : ''}>
+      ${_sweepInFlight ? '⏳ Sweep in progress…' : '▶ Run lifecycle sweep'}
+    </button>
   </form>
   <button class="btn-secondary" id="btn-dryrun" onclick="runDryRun()" type="button">🔍 Preview (dry run)</button>
   <a class="btn-secondary" href="/internal">↻ Refresh</a>
   <a class="btn-secondary" href="/api/internal/stats" target="_blank">⤤ Stats JSON</a>
+  <a class="btn-secondary" href="/healthz" target="_blank">♥ Healthz</a>
 </div>
 
 <!-- Dry-run result panel (hidden until triggered) -->
@@ -912,15 +974,22 @@ ${flashHtml}
     <table>
       <thead><tr><th>Timestamp</th><th class="num">Evaluated</th><th class="num">→ At risk</th><th class="num">→ Recovered</th><th class="num">→ Expired</th><th class="num">Errors</th></tr></thead>
       <tbody>${stats.lifecycleRunHistory.length
-        ? stats.lifecycleRunHistory.map((r) => `
+        ? stats.lifecycleRunHistory.map((r) => {
+          const slugList = r.errorSlugs?.length ? r.errorSlugs.map(esc).join(', ') : '';
+          const errTitle = slugList ? ` title="Failed slugs: ${slugList}"` : '';
+          const errDetail = slugList
+            ? `<br/><span class="text-mono" style="font-size:10px;color:#f87171;opacity:.7">${slugList}</span>`
+            : '';
+          return `
         <tr>
           <td class="text-mono text-muted">${esc(r.ts)}</td>
           <td class="num">${r.evaluated}</td>
           <td class="num ${r.at_risk  > 0 ? 'text-warn' : ''}">${r.at_risk}</td>
           <td class="num ${r.recovered > 0 ? 'text-ok'  : ''}">${r.recovered}</td>
           <td class="num ${r.expired  > 0 ? 'text-danger' : ''}">${r.expired}</td>
-          <td class="num ${r.errors   > 0 ? 'text-danger' : ''}">${r.errors}</td>
-        </tr>`).join('')
+          <td class="num ${r.errors   > 0 ? 'text-danger' : ''}"${errTitle}>${r.errors}${errDetail}</td>
+        </tr>`;
+        }).join('')
         : '<tr><td colspan="6" class="empty-cell">No lifecycle runs recorded yet</td></tr>'}
       </tbody>
     </table>
@@ -1015,11 +1084,35 @@ async function runDryRun() {
 /**
  * GET /healthz
  *
- * Lightweight liveness probe for Docker / load balancers.
- * Does not require the frontend to be built.
+ * Liveness + data-store reachability probe for Docker / load balancers.
+ *
+ * Always returns HTTP 200 so that a degraded-but-alive server is still
+ * counted as "up" by the load balancer.  Monitoring scripts should inspect
+ * the `status` field:
+ *   - "ok"       → all data store checks passed
+ *   - "degraded" → data directory or index.json is inaccessible / corrupt
+ *
+ * Response shape:
+ * {
+ *   status:        "ok" | "degraded",
+ *   sweepInFlight: boolean,
+ *   checks: {
+ *     dataDir:       "ok" | "error",
+ *     index:         "ok" | "missing" | "corrupt" | "error",
+ *     lifecycleRuns: "ok" | "missing" | "corrupt" | "error",
+ *   },
+ *   ts: string  // ISO timestamp
+ * }
  */
-app.get('/healthz', (_req, res) => {
-  res.json({ status: 'ok', ts: new Date().toISOString() });
+app.get('/healthz', async (_req, res) => {
+  try {
+    const { status, checks } = await checkDataStore('./data');
+    return res.json({ status, sweepInFlight: _sweepInFlight, checks, ts: new Date().toISOString() });
+  } catch (err) {
+    // checkDataStore itself should not throw, but be defensive
+    log.error('healthz.error', { error: err.message });
+    return res.json({ status: 'degraded', sweepInFlight: _sweepInFlight, checks: {}, ts: new Date().toISOString() });
+  }
 });
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
@@ -1042,26 +1135,29 @@ const LIFECYCLE_INTERVAL_MS =
   parseInt(process.env.LIFECYCLE_INTERVAL_MS ?? String(24 * 60 * 60 * 1000), 10);
 
 function scheduleLifecycleSweep() {
+  /** Run one sweep cycle, respecting the in-flight guard. */
+  async function runScheduledSweep(label) {
+    if (_sweepInFlight) {
+      log.warn('lifecycle.scheduler.skipped', { label, reason: 'sweep already in flight' });
+      return;
+    }
+    _sweepInFlight = true;
+    try {
+      const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
+      await appendLifecycleRun(summary);
+    } catch (err) {
+      log.error(`lifecycle.${label}.error`, { error: err.message });
+    } finally {
+      _sweepInFlight = false;
+    }
+  }
+
   // Run once at startup (after a short delay to let the server warm up)
   const startupDelay = process.env.NODE_ENV === 'test' ? 0 : 30_000;
-  setTimeout(async () => {
-    try {
-      const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
-      await appendLifecycleRun(summary);
-    } catch (err) {
-      log.error('lifecycle.startup.error', { error: err.message });
-    }
-  }, startupDelay);
+  setTimeout(() => runScheduledSweep('startup'), startupDelay);
 
   // Then recur on the configured interval
-  const timer = setInterval(async () => {
-    try {
-      const summary = await runLifecycleSweep(loadIndex, saveIndex, withIndexLock);
-      await appendLifecycleRun(summary);
-    } catch (err) {
-      log.error('lifecycle.interval.error', { error: err.message });
-    }
-  }, LIFECYCLE_INTERVAL_MS);
+  const timer = setInterval(() => runScheduledSweep('interval'), LIFECYCLE_INTERVAL_MS);
 
   timer.unref(); // Don't block process exit
 }

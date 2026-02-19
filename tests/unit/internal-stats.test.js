@@ -177,3 +177,53 @@ test('[ST-10] lifecycleRunHistory shapes each entry with transition sub-fields',
   assert.equal(r.expired,   0);
   assert.equal(r.errors,    3);
 });
+
+// ── Day 4 — errorSlugs in run history ────────────────────────────────────────
+
+test('[ST-11] lifecycleRunHistory includes errorSlugs array from run records', () => {
+  const runs = [
+    {
+      ts:          '2026-02-18T00:00:00.000Z',
+      evaluated:   3,
+      transitions: { at_risk: 0, recovered: 0, expired: 0 },
+      errors:      2,
+      errorSlugs:  ['bad-slug-1', 'bad-slug-2'],
+    },
+  ];
+  const stats = computeInternalStats({}, runs, '2026-02-18T00:00:00.000Z');
+  const r = stats.lifecycleRunHistory[0];
+  assert.ok(Array.isArray(r.errorSlugs), 'errorSlugs should be an array');
+  assert.deepEqual(r.errorSlugs, ['bad-slug-1', 'bad-slug-2']);
+});
+
+test('[ST-12] lifecycleRunHistory caps errorSlugs at 5', () => {
+  const runs = [
+    {
+      ts:          '2026-02-18T00:00:00.000Z',
+      evaluated:   10,
+      transitions: { at_risk: 0, recovered: 0, expired: 0 },
+      errors:      8,
+      errorSlugs:  ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'],
+    },
+  ];
+  const stats = computeInternalStats({}, runs, '2026-02-18T00:00:00.000Z');
+  const r = stats.lifecycleRunHistory[0];
+  assert.equal(r.errorSlugs.length, 5);
+  assert.deepEqual(r.errorSlugs, ['s1', 's2', 's3', 's4', 's5']);
+});
+
+test('[ST-13] lifecycleRunHistory errorSlugs defaults to [] when absent', () => {
+  const runs = [
+    {
+      ts:          '2026-02-18T00:00:00.000Z',
+      evaluated:   2,
+      transitions: { at_risk: 0, recovered: 0, expired: 0 },
+      errors:      0,
+      // no errorSlugs field (old record format)
+    },
+  ];
+  const stats = computeInternalStats({}, runs, '2026-02-18T00:00:00.000Z');
+  const r = stats.lifecycleRunHistory[0];
+  assert.ok(Array.isArray(r.errorSlugs));
+  assert.equal(r.errorSlugs.length, 0);
+});

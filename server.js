@@ -57,7 +57,7 @@ if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Visitor-Id');
     if (req.method === 'OPTIONS') { res.sendStatus(200); return; }
     next();
   });
@@ -537,6 +537,29 @@ app.post('/api/internal/lifecycle/run', apiInternalAuth(), async (req, res) => {
 });
 
 /**
+ * POST /api/internal/lifecycle/dry-run
+ *
+ * Preview what the lifecycle sweep would do — evaluates all articles and returns
+ * the same summary as /lifecycle/run but WITHOUT persisting any transitions.
+ * Safe to call at any time; does not mutate index state.
+ *
+ * Response: same shape as /lifecycle/run, plus `dryRun: true`.
+ */
+app.post('/api/internal/lifecycle/dry-run', apiInternalAuth(), async (req, res) => {
+  try {
+    // Pass a no-op saveIndex and a pass-through lock: evaluation runs fully
+    // but no writes are committed to data/index.json.
+    const noopSave = async () => {};
+    const noopLock = async (fn) => fn();
+    const summary  = await runLifecycleSweep(loadIndex, noopSave, noopLock);
+    return res.json({ ...summary, dryRun: true });
+  } catch (err) {
+    log.error('lifecycle.dryrun.error', { error: err.message });
+    return res.status(500).json({ error: 'Dry-run sweep failed', details: err.message });
+  }
+});
+
+/**
  * GET /api/internal/config
  *
  * Expose current runtime configuration for debugging.
@@ -786,6 +809,7 @@ a{color:#818cf8;text-decoration:none}a:hover{text-decoration:underline}
 .text-mono{font-family:ui-monospace,'Cascadia Code','Fira Code',monospace;font-size:12px}
 .text-warn{color:#fbbf24}
 .text-danger{color:#f87171}
+.text-ok{color:#34d399}
 
 /* ── Status/tier badges ──────────────────────────────────────────────── */
 .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
@@ -826,6 +850,9 @@ ${flashHtml}
   <div class="card ${stats.expired > 0 ? 'c-err' : ''}"><div class="card-label">Expired</div><div class="card-val">${stats.expired}</div></div>
   <div class="card"><div class="card-label">Free</div><div class="card-val">${stats.free}</div></div>
   <div class="card"><div class="card-label">Paid</div><div class="card-val">${stats.paid}</div></div>
+  <div class="card"><div class="card-label">Total views</div><div class="card-val">${stats.totalViews.toLocaleString()}</div></div>
+  <div class="card ${stats.zeroViewsCount > 0 ? 'c-warn' : ''}"><div class="card-label">Zero-view free</div><div class="card-val">${stats.zeroViewsCount}</div></div>
+  <div class="card"><div class="card-label">New (7d)</div><div class="card-val">${stats.publishedLast7d}</div></div>
 </div>
 
 <!-- Transitions 24h -->
@@ -839,11 +866,21 @@ ${flashHtml}
 
 <!-- Actions -->
 <div class="actions">
-  <form method="POST" action="/internal/actions/lifecycle-run" style="margin:0">
-    <button class="btn-run" type="submit">▶ Run lifecycle sweep now</button>
+  <form method="POST" action="/internal/actions/lifecycle-run" style="margin:0" id="lc-run-form" onsubmit="return confirmRun(event)">
+    <button class="btn-run" type="submit" id="btn-run">▶ Run lifecycle sweep</button>
   </form>
+  <button class="btn-secondary" id="btn-dryrun" onclick="runDryRun()" type="button">🔍 Preview (dry run)</button>
   <a class="btn-secondary" href="/internal">↻ Refresh</a>
   <a class="btn-secondary" href="/api/internal/stats" target="_blank">⤤ Stats JSON</a>
+</div>
+
+<!-- Dry-run result panel (hidden until triggered) -->
+<div id="dryrun-panel" style="display:none;margin-bottom:20px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:16px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Dry-run preview</span>
+    <button onclick="document.getElementById('dryrun-panel').style.display='none'" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:14px">✕</button>
+  </div>
+  <pre id="dryrun-output" style="font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;color:#cbd5e1;white-space:pre-wrap;margin:0">Loading…</pre>
 </div>
 
 <!-- Expiring soon -->
@@ -868,6 +905,28 @@ ${flashHtml}
   </div>
 </div>
 
+<!-- Lifecycle run history -->
+<div class="section">
+  <div class="section-label">Lifecycle run history (last ${stats.lifecycleRunHistory.length || 0} runs · ${stats.sweepCount24h} in past 24h)</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Timestamp</th><th class="num">Evaluated</th><th class="num">→ At risk</th><th class="num">→ Recovered</th><th class="num">→ Expired</th><th class="num">Errors</th></tr></thead>
+      <tbody>${stats.lifecycleRunHistory.length
+        ? stats.lifecycleRunHistory.map((r) => `
+        <tr>
+          <td class="text-mono text-muted">${esc(r.ts)}</td>
+          <td class="num">${r.evaluated}</td>
+          <td class="num ${r.at_risk  > 0 ? 'text-warn' : ''}">${r.at_risk}</td>
+          <td class="num ${r.recovered > 0 ? 'text-ok'  : ''}">${r.recovered}</td>
+          <td class="num ${r.expired  > 0 ? 'text-danger' : ''}">${r.expired}</td>
+          <td class="num ${r.errors   > 0 ? 'text-danger' : ''}">${r.errors}</td>
+        </tr>`).join('')
+        : '<tr><td colspan="6" class="empty-cell">No lifecycle runs recorded yet</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <div class="footer">
   <span>mdpage internal dashboard</span>
   <span>Auto-refresh every 5 min · <a href="/healthz" target="_blank">/healthz</a></span>
@@ -876,6 +935,72 @@ ${flashHtml}
 </div><!-- /container -->
 
 <meta http-equiv="refresh" content="300;url=/internal"/>
+
+<script>
+// ── Lifecycle run safety guard ───────────────────────────────────────────────
+function confirmRun(e) {
+  const btn = document.getElementById('btn-run');
+  if (btn.dataset.confirmed !== 'yes') {
+    e.preventDefault();
+    btn.textContent = '⚠ Click again to confirm sweep';
+    btn.dataset.confirmed = 'yes';
+    btn.style.background = '#b45309';
+    // Reset after 4 seconds if not confirmed
+    setTimeout(() => {
+      btn.textContent = '▶ Run lifecycle sweep';
+      btn.dataset.confirmed = '';
+      btn.style.background = '';
+    }, 4000);
+    return false;
+  }
+  // Second click: disable to prevent double-submit
+  btn.disabled = true;
+  btn.textContent = '⏳ Running sweep…';
+  return true;
+}
+
+// ── Dry-run preview ──────────────────────────────────────────────────────────
+async function runDryRun() {
+  const panel  = document.getElementById('dryrun-panel');
+  const output = document.getElementById('dryrun-output');
+  const drbtn  = document.getElementById('btn-dryrun');
+
+  panel.style.display = 'block';
+  output.textContent  = 'Running dry-run evaluation…';
+  drbtn.disabled      = true;
+  drbtn.textContent   = '⏳ Previewing…';
+
+  try {
+    const res  = await fetch('/api/internal/lifecycle/dry-run', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      output.textContent = 'Error: ' + (data.error ?? res.statusText);
+    } else {
+      const { evaluated, transitions, errors, dryRun } = data;
+      const lines = [
+        \`Dry run: \${dryRun ? 'yes (no changes written)' : 'unknown'}\`,
+        \`Evaluated: \${evaluated}\`,
+        \`→ Would enter at_risk: \${transitions.at_risk}\`,
+        \`→ Would recover:       \${transitions.recovered}\`,
+        \`→ Would expire:        \${transitions.expired}\`,
+        \`   No change:          \${transitions.no_change}\`,
+        \`   Skipped (paid/new): \${transitions.skipped}\`,
+        \`Errors: \${errors?.length ?? 0}\`,
+      ];
+      if (errors?.length > 0) {
+        lines.push('', 'Error slugs:');
+        errors.forEach((e) => lines.push(\`  \${e.slug}: \${e.error}\`));
+      }
+      output.textContent = lines.join('\\n');
+    }
+  } catch (err) {
+    output.textContent = 'Request failed: ' + err.message;
+  } finally {
+    drbtn.disabled    = false;
+    drbtn.textContent = '🔍 Preview (dry run)';
+  }
+}
+</script>
 
 </body>
 </html>`);

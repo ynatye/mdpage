@@ -189,7 +189,74 @@ If values do not match expected output, confirm:
 
 ---
 
-## 6) Morning Quick Validation
+## 6) Internal Dashboard Operations
+
+The dashboard lives at `GET /internal` and is protected by `INTERNAL_DASHBOARD_TOKEN`.
+
+### Authentication
+
+- **Browser:** navigate to `/internal` → enter token in the login form → 8-hour session cookie issued.
+- **API scripts:** pass `x-internal-token: <token>` header on any `/api/internal/*` request.
+- **Sign out:** `GET /internal/logout` clears the session cookie.
+- **Unset token (dev):** dashboard is open with a warning banner.
+
+### Dashboard panels
+
+| Panel | What it shows |
+|---|---|
+| Overview cards | Total / Published / At-risk / Expired / Free / Paid / Total views / Zero-view free / New (7d) |
+| Transitions 24h | Summarised lifecycle transitions from recent sweeps |
+| Expiring soon | At-risk articles with ≤ 7 days left; red = ≤ 2d, amber = ≤ 4d |
+| Top posts (30d) | Most-viewed articles by 30-day unique views |
+| Lifecycle run history | Last 10 sweeps — timestamp, evaluated count, transition breakdown, error count |
+
+### Zero-view free articles
+
+The **Zero-view free** card counts active (non-expired) free articles with 0 unique views in
+the last 30 days.  These are the next candidates for `at_risk` once they age past 30 days.
+A non-zero value is normal on a new instance; a high value on a mature site may indicate a
+seeding or traffic problem.
+
+### Running a lifecycle sweep
+
+**From the dashboard:**
+
+1. Click **▶ Run lifecycle sweep**.
+2. A confirmation prompt appears — click again to execute.
+3. A flash banner confirms success or failure after the redirect.
+
+**Before committing:** run a **dry-run preview** first:
+
+- Click **🔍 Preview (dry run)** — the panel shows what _would_ change without writing anything.
+- Or via API:
+  ```bash
+  curl -s -X POST http://localhost:3456/api/internal/lifecycle/dry-run \
+    -H "x-internal-token: $TOKEN" | python3 -m json.tool
+  ```
+
+**Directly via API (no dry-run):**
+
+```bash
+curl -s -X POST http://localhost:3456/api/internal/lifecycle/run \
+  -H "x-internal-token: $TOKEN" | python3 -m json.tool
+```
+
+### Reading the run history table
+
+| Column | Meaning |
+|---|---|
+| Timestamp | UTC ISO time the sweep ran |
+| Evaluated | Articles that went through lifecycle evaluation (skips paid + too-new) |
+| → At risk | Articles that newly entered `at_risk` state |
+| → Recovered | Articles that recovered from `at_risk` back to `published` |
+| → Expired | Articles that passed their countdown and became `expired` |
+| Errors | Slugs that failed during evaluation (check server logs for detail) |
+
+A healthy production run should show 0 errors and predictable transition counts.
+
+---
+
+## 7) Morning Quick Validation
 
 Run this set every morning after deploys or overnight operations:
 

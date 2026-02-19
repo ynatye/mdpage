@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — Phase 2
 
+### Added (Day 8 — webhooks + entitlements)
+
+- `lib/webhooks.js` — webhook event processing:
+  - `verifyStripeWebhook(rawBody, signature, secret)` — HMAC-SHA256 verification via Stripe SDK (dynamic import)
+  - `extractSlugFromEvent(event)` — extracts `mdpage_slug` from event metadata
+  - `processStripeEvent(event)` — pure dispatch: maps event type to `{ action, slug, entitlement, revokeReason }` without touching I/O
+    - `checkout.session.completed` (paid) → `grant`
+    - `payment_intent.payment_failed` → `update` (stay pending)
+    - `charge.refunded` → `revoke` (refunded)
+    - `customer.subscription.deleted` → `revoke` (expired)
+    - `customer.subscription.updated` (cancel) → `update` (cancelled)
+    - All other types → `ignore`
+  - `applyWebhookDispatch(dispatch, loadIndex, saveIndex, withLock)` — applies grant/revoke/update to index under lock; returns `{ ok, slug, action, message }`
+  - `WebhookVerificationError` — typed error for signature failures
+- `POST /api/webhooks/stripe` — Stripe webhook endpoint:
+  - Uses `express.raw({ type: 'application/json' })` to capture raw body for HMAC verification
+  - Verifies signature; rejects bad signatures with 400
+  - Processes event → dispatches → always returns 200 to Stripe (retry-safe)
+  - Stub mode (BILLING_PROVIDER=none): returns `{ received: true, skipped: true }` immediately
+- `tests/unit/webhooks.test.js` — 18 new unit tests across WH-01..WH-12
+- Unit test count: 213 → 231
+
 ### Added (Day 7 — checkout initiation flow)
 
 - `lib/checkout.js` — checkout session creation:

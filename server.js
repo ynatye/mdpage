@@ -39,6 +39,12 @@ import {
   PLANS,
 } from './lib/billing.js';
 import { createCheckoutSession, hasPendingCheckout, CheckoutError } from './lib/checkout.js';
+import {
+  verifyStripeWebhook,
+  processStripeEvent,
+  applyWebhookDispatch,
+  WebhookVerificationError,
+} from './lib/webhooks.js';
 import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
@@ -1376,6 +1382,81 @@ app.get('/api/checkout/status/:slug', async (req, res) => {
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// ── Webhook endpoints ─────────────────────────────────────────────────────────
+
+/**
+ * POST /api/webhooks/stripe
+ *
+ * Receives and processes Stripe webhook events.
+ * Raw body is required for HMAC signature verification — this route uses
+ * express.raw() to capture the body before JSON parsing.
+ *
+ * Security: verifies Stripe-Signature header using STRIPE_WEBHOOK_SECRET.
+ * Events that fail verification are rejected with 400.
+ *
+ * Supported events:
+ *   checkout.session.completed     → grant paid entitlement
+ *   payment_intent.payment_failed  → log (stay pending)
+ *   charge.refunded                → revoke (refunded)
+ *   customer.subscription.deleted  → revoke (expired)
+ *   customer.subscription.updated  → update billing status
+ *
+ * When BILLING_PROVIDER=none, accepts the call and returns 200 immediately
+ * (allows health checks and CI without real Stripe events).
+ */
+app.post(
+  '/api/webhooks/stripe',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    // Stub mode — provider not configured
+    if (billingConfig.provider === 'none') {
+      log.info('webhook.stripe.stub', { reason: 'BILLING_PROVIDER=none' });
+      return res.json({ received: true, skipped: true, reason: 'billing_provider_none' });
+    }
+
+    let event;
+    try {
+      const rawBody  = req.body;      // Buffer from express.raw()
+      const signature = req.headers['stripe-signature'] ?? '';
+      event = await verifyStripeWebhook(rawBody, signature, billingConfig.stripe.webhookSecret);
+    } catch (err) {
+      if (err instanceof WebhookVerificationError) {
+        log.warn('webhook.stripe.verification_failed', { error: err.message });
+        return res.status(400).json({ error: err.message });
+      }
+      log.error('webhook.stripe.parse_error', { error: err.message });
+      return res.status(400).json({ error: 'Invalid webhook payload' });
+    }
+
+    log.info('webhook.stripe.event', { type: event.type, id: event.id });
+
+    const dispatch = processStripeEvent(event);
+    const result   = await applyWebhookDispatch(
+      dispatch,
+      loadIndex,
+      saveIndex,
+      withIndexLock,
+    );
+
+    log.info('webhook.stripe.processed', {
+      type:   event.type,
+      id:     event.id,
+      action: result.action,
+      slug:   result.slug,
+      ok:     result.ok,
+    });
+
+    // Always return 200 to Stripe — retrying on failure would re-process events.
+    // Monitor logs for result.ok=false cases.
+    return res.json({
+      received: true,
+      action:   result.action,
+      ok:       result.ok,
+      message:  result.message,
+    });
+  }
+);
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 

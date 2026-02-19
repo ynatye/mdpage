@@ -8,6 +8,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — Phase 2
 
+### Added (Day 7 — checkout initiation flow)
+
+- `lib/checkout.js` — checkout session creation:
+  - `createCheckoutSession(slug, meta, options)` — creates Stripe session when configured, returns stub session otherwise
+  - Stub mode: unique sessionId, configurable successUrl/cancelUrl, no network calls — usable without Stripe keys
+  - Stripe mode: dynamic `import('stripe')` (avoids hard dependency), supports both priceId and inline price_data
+  - `hasPendingCheckout(meta)` — guard against duplicate sessions
+  - `CheckoutError` — typed error with code field (missing_key, sdk_missing)
+- `POST /api/checkout/session` — initiate checkout; validates slug, rejects already-active/pending; marks article as `billingStatus=pending`+`checkoutSessionId` before redirecting; returns `{ sessionId, url, stub, provider, amountCents, currency }`
+- `GET /api/checkout/status/:slug` — lightweight billing status check (no auth required); returns `{ slug, tier, billingStatus, checkoutSessionId, planActivatedAt }`
+- `src/components/UpgradeCTA.jsx` — upgrade CTA component with two variants:
+  - `'button'` — compact inline button (used in banners)
+  - `'section'` — full upgrade section with feature list (used on expired page)
+  - Calls `POST /api/checkout/session` and redirects to checkout URL; handles 409/503/network errors
+- `src/pages/Article.jsx` — `ExpiredPage` now shows `UpgradeCTA` section variant with slug (enables in-place upgrade from expired page); `ExpiredPage` receives `slug` prop
+- `tests/unit/checkout.test.js` — 17 new unit tests across CO-01..CO-03
+- Unit test count: 196 → 213
+
 ### Added (Day 6 — billing schema/config plumbing)
 
 - `lib/billing.js` — billing plan definitions and configuration plumbing:

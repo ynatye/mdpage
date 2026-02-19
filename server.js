@@ -34,8 +34,11 @@ import {
   billingConfig,
   billingReadiness,
   defaultBillingMeta,
+  applyEntitlement,
+  BILLING_STATUS,
   PLANS,
 } from './lib/billing.js';
+import { createCheckoutSession, hasPendingCheckout, CheckoutError } from './lib/checkout.js';
 import { checkDataStore } from './lib/healthz.js';
 import log from './lib/logger.js';
 import {
@@ -1221,6 +1224,156 @@ app.get('/healthz', async (_req, res) => {
     // checkDataStore itself should not throw, but be defensive
     log.error('healthz.error', { error: err.message });
     return res.json({ status: 'degraded', sweepInFlight: _sweepInFlight, checks: {}, ts: new Date().toISOString() });
+  }
+});
+
+// ── Checkout endpoints ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/checkout/session
+ *
+ * Initiate a checkout session to upgrade an article to paid tier.
+ * Returns a URL to redirect the user to the payment provider.
+ *
+ * When BILLING_PROVIDER=none (default), returns a stub session that can be
+ * used to test the upgrade flow without real charges.
+ *
+ * Request body:
+ * {
+ *   slug:          string    — article to upgrade
+ *   customerEmail: string?  — prefill email in checkout (optional)
+ *   successUrl:    string?  — override success redirect (optional)
+ *   cancelUrl:     string?  — override cancel redirect (optional)
+ * }
+ *
+ * Response (200 OK):
+ * {
+ *   sessionId:   string,
+ *   url:         string,   — redirect user here
+ *   stub:        boolean,  — true in none/dev mode
+ *   provider:    string,
+ *   amountCents: number,
+ *   currency:    string,
+ * }
+ */
+app.post('/api/checkout/session', async (req, res) => {
+  try {
+    const { slug, customerEmail, successUrl, cancelUrl } = req.body ?? {};
+
+    if (!slug || typeof slug !== 'string') {
+      return res.status(400).json({ error: 'slug is required' });
+    }
+
+    const normSlug = slug.trim().toLowerCase();
+    if (!/^[a-z0-9-]+$/.test(normSlug)) {
+      return res.status(400).json({ error: 'Invalid slug format' });
+    }
+
+    const index   = await loadIndex();
+    const article = index[normSlug];
+
+    if (!article) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    // Already paid → no checkout needed
+    if (article.tier === 'paid' && article.billingStatus === BILLING_STATUS.ACTIVE) {
+      return res.status(409).json({
+        error: 'Article already has an active paid entitlement',
+        slug: normSlug,
+      });
+    }
+
+    // Already pending → surface existing session rather than creating another
+    if (hasPendingCheckout(article)) {
+      return res.status(409).json({
+        error: 'A checkout session is already pending for this article',
+        slug: normSlug,
+        hint: 'Complete or abandon the existing checkout before starting a new one',
+      });
+    }
+
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const session = await createCheckoutSession(normSlug, article, {
+      customerEmail,
+      successUrl,
+      cancelUrl,
+      origin,
+    });
+
+    // Mark article as pending so we don't create duplicate sessions
+    await withIndexLock(async () => {
+      const fresh = await loadIndex();
+      if (fresh[normSlug]) {
+        fresh[normSlug] = {
+          ...fresh[normSlug],
+          billingStatus:     BILLING_STATUS.PENDING,
+          checkoutSessionId: session.sessionId,
+          updatedAt:         new Date().toISOString(),
+        };
+        await saveIndex(fresh);
+      }
+    });
+
+    log.info('checkout.session.initiated', {
+      slug:      normSlug,
+      sessionId: session.sessionId,
+      provider:  session.provider,
+      stub:      session.stub,
+    });
+
+    return res.json(session);
+
+  } catch (err) {
+    if (err instanceof CheckoutError) {
+      const statusCode = err.code === 'missing_key' ? 503 : 400;
+      return res.status(statusCode).json({ error: err.message, code: err.code });
+    }
+    log.error('checkout.session.error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+/**
+ * GET /api/checkout/status/:slug
+ *
+ * Lightweight checkout status check for an article.
+ * Useful for polling after returning from the payment provider.
+ *
+ * Response (200 OK):
+ * {
+ *   slug:            string,
+ *   tier:            "free" | "paid",
+ *   billingStatus:   string,
+ *   checkoutSessionId: string | null,
+ *   planActivatedAt: string | null,
+ * }
+ */
+app.get('/api/checkout/status/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+      return res.status(400).json({ error: 'Invalid slug' });
+    }
+
+    const index   = await loadIndex();
+    const article = index[slug];
+
+    if (!article) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    return res.json({
+      slug,
+      tier:               article.tier             ?? 'free',
+      billingStatus:      article.billingStatus     ?? BILLING_STATUS.NONE,
+      checkoutSessionId:  article.checkoutSessionId ?? null,
+      planActivatedAt:    article.planActivatedAt   ?? null,
+    });
+
+  } catch (err) {
+    log.error('checkout.status.error', { error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -4,6 +4,7 @@ import { useChartHydration } from '@/hooks/useChartHydration.jsx'
 import AdSlot from '@/components/AdSlot'
 import AtRiskBanner from '@/components/AtRiskBanner'
 import LifecycleStatusBar from '@/components/LifecycleStatusBar'
+import UpgradeCTA from '@/components/UpgradeCTA'
 
 // ── Visitor identity ────────────────────────────────────────────────────────
 // We store a stable UUID in localStorage so the server can deduplicate views
@@ -91,9 +92,9 @@ function trackView(slug) {
 
 // ── Expired post page ──────────────────────────────────────────────────────
 
-function ExpiredPage({ title }) {
+function ExpiredPage({ title, slug }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="min-h-screen flex items-center justify-center bg-background py-12">
       <div
         className="text-center max-w-md mx-auto px-4"
         style={{ fontFamily: 'Geist Mono, monospace' }}
@@ -106,24 +107,20 @@ function ExpiredPage({ title }) {
           This free post didn't receive enough traffic to remain active and has
           been archived.
         </p>
-        <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
-          Free posts expire after 30 days with low traffic. Paid posts are kept
-          permanently and are ad-free with a clean slug.
-        </p>
+
+        {/* Upgrade CTA — only shown if we know the slug */}
+        {slug && (
+          <div className="mt-6 mb-8">
+            <UpgradeCTA slug={slug} variant="section" label="Restore & Upgrade to Paid" />
+          </div>
+        )}
+
         <a
           href="/"
-          className="inline-block rounded bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
+          className="inline-block rounded border border-border text-muted-foreground px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity"
         >
-          Publish a new post
+          Publish a new post instead
         </a>
-        <div className="mt-4">
-          <a
-            href="/"
-            className="text-xs text-muted-foreground hover:opacity-70 underline underline-offset-2"
-          >
-            Learn about Paid posts →
-          </a>
-        </div>
       </div>
     </div>
   )
@@ -263,7 +260,7 @@ export default function Article() {
 
   // ── Issue #9: Expired state ────────────────────────────────────────────────
   if (articleExpired) {
-    return <ExpiredPage title={expiredTitle} />
+    return <ExpiredPage title={expiredTitle} slug={slug} />
   }
 
   // ── Error state ────────────────────────────────────────────────────────────
